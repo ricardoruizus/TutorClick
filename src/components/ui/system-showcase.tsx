@@ -215,7 +215,7 @@ function CheckoutFlow() {
         </p>
       </header>
       <div className="flex flex-wrap gap-8">
-        <CheckoutScreen label="1. Confirmación con Visa •••• 4242" initialMode="form" />
+        <CheckoutScreen label="1. Confirmación con Visa •••• 4242" initialMode="form" showSavedCard />
         <CheckoutScreen label="2. Agregar tarjeta nueva" initialMode="new-card" initialClassMode="Presencial" />
         <CheckoutScreen label="3. Clase confirmada" initialMode="sent" />
         <CheckoutScreen label="4. Estado: procesando pago" initialMode="processing" />

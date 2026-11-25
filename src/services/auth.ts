@@ -2,6 +2,8 @@ import { useSyncExternalStore } from 'react'
 import type { Session } from '@supabase/supabase-js'
 
 import type { AuthRole, PortalPath, UserRole } from '../types'
+import type { TutorClassMode } from './perfiles'
+import { uploadTutorCredential } from './perfiles'
 import { getSupabaseClient, isSupabaseConfigured } from './supabase'
 
 export type { AuthRole, PortalPath }
@@ -27,13 +29,43 @@ export interface AuthService {
   getDemoCredentials(role: AuthRole): DemoCredentials | null
   loginWithPassword(expectedRole: AuthRole, email: string, password: string): Promise<LoginAttemptResult>
   verifyAdminTwoFactor(code: string): Promise<{ ok: true } | { ok: false; message: string }>
-  register(role: UserRole, email: string, password: string, fullName: string): Promise<RegistrationResult>
+  register(
+    role: UserRole,
+    email: string,
+    password: string,
+    fullName: string,
+    profile: RegistrationProfile,
+  ): Promise<RegistrationResult>
   logout(): Promise<void>
 }
 
 export type RegistrationResult =
-  | { ok: true; emailConfirmationRequired: boolean }
+  | {
+      ok: true
+      emailConfirmationRequired: boolean
+      credentialsPendingConfirmation?: boolean
+      warning?: string
+    }
   | { ok: false; message: string }
+
+export interface StudentRegistrationProfile {
+  career: string
+  preferredMode: 'Presencial' | 'En línea' | 'Presencial y en línea'
+}
+
+export interface TutorRegistrationProfile {
+  biography: string
+  subjects: string[]
+  educationLevel: string
+  hourlyRateMxn: number
+  classModes: TutorClassMode[]
+  serviceZone: string
+  travelRadiusKm: number
+  titleDocument: File
+  licenseDocument: File
+}
+
+export type RegistrationProfile = StudentRegistrationProfile | TutorRegistrationProfile
 
 export type LoginAttemptResult =
   | {
@@ -337,8 +369,28 @@ export async function register(
   rawEmail: string,
   password: string,
   fullName: string,
+  profile: RegistrationProfile,
 ): Promise<RegistrationResult> {
   try {
+    let metadata: Record<string, string | number | string[]>
+    if (role === 'alumno' && 'career' in profile) {
+      metadata = {
+        career: profile.career,
+        preferred_mode: profile.preferredMode,
+      }
+    } else if (role === 'tutor' && 'biography' in profile) {
+      metadata = {
+        biography: profile.biography,
+        subjects: profile.subjects,
+        education_level: profile.educationLevel,
+        hourly_rate_mxn: profile.hourlyRateMxn,
+        class_modes: profile.classModes,
+        service_zone: profile.serviceZone,
+        travel_radius_km: profile.travelRadiusKm,
+      }
+    } else {
+      return { ok: false, message: 'Los datos del perfil no coinciden con el rol seleccionado.' }
+    }
     const supabase = getSupabaseClient()
     const { data, error } = await supabase.auth.signUp({
       email: rawEmail.trim().toLowerCase(),
@@ -348,16 +400,41 @@ export async function register(
         data: {
           full_name: fullName.trim(),
           role,
+          ...metadata,
         },
       },
     })
     if (error) return { ok: false, message: error.message }
+    if (!data.user) return { ok: false, message: 'Supabase no devolvió el usuario creado.' }
 
+    let warning: string | undefined
+    let credentialsPendingConfirmation = false
     if (data.session) {
       const sessionError = await updateSessionFromAuth(data.session)
       if (sessionError) return { ok: false, message: sessionError }
+      if (role === 'tutor') {
+        if (!('titleDocument' in profile)) {
+          return { ok: false, message: 'Faltan los documentos profesionales del tutor.' }
+        }
+        try {
+          await uploadTutorCredential(data.user.id, 'title', profile.titleDocument)
+          await uploadTutorCredential(data.user.id, 'license', profile.licenseDocument)
+        } catch (uploadError) {
+          warning =
+            uploadError instanceof Error
+              ? uploadError.message
+              : 'No se pudieron guardar ambos documentos. Puedes reintentarlo desde Credenciales.'
+        }
+      }
+    } else if (role === 'tutor') {
+      credentialsPendingConfirmation = true
     }
-    return { ok: true, emailConfirmationRequired: !data.session }
+    return {
+      ok: true,
+      emailConfirmationRequired: !data.session,
+      credentialsPendingConfirmation,
+      warning,
+    }
   } catch (error) {
     return {
       ok: false,

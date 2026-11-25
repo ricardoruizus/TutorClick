@@ -13,7 +13,7 @@ import {
   type AuthRole,
   type LoginAttemptResult,
 } from '../../services/auth'
-import type { RegistrationResult } from '../../services/auth'
+import type { RegistrationResult, StudentRegistrationProfile } from '../../services/auth'
 
 const cx = (...a: (string | false | undefined)[]) => a.filter(Boolean).join(' ')
 const emailOk = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)
@@ -570,13 +570,13 @@ export function StudentForm({
   label?: string
   embedded?: boolean
   onBack?: () => void
-  onSuccess?: (details: { fullName: string; email: string; password: string; career: string; mode: string }) => Promise<RegistrationResult | void> | RegistrationResult | void
+  onSuccess?: (details: { fullName: string; email: string; password: string } & StudentRegistrationProfile) => Promise<RegistrationResult | void> | RegistrationResult | void
 }) {
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [pass, setPass] = useState('')
   const [career, setCareer] = useState('')
-  const [mode, setMode] = useState('')
+  const [mode, setMode] = useState<(typeof modes)[number][0] | ''>('')
   const [terms, setTerms] = useState(false)
   const [sub, setSub] = useState(showErrors)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -603,7 +603,7 @@ export function StudentForm({
           email,
           password: pass,
           career,
-          mode,
+          preferredMode: mode === 'Híbrida' ? 'Presencial y en línea' : mode,
         })
         if (result && !result.ok) {
           setServerError(result.message)
@@ -666,9 +666,6 @@ export function StudentForm({
           </div>
           {e.mode && <p id={id('m-m')} role="alert" className="mt-1.5 flex items-center gap-1.5 font-medium text-err"><AlertTriangle size={16} aria-hidden />{e.mode}</p>}
         </fieldset>
-        <p className="rounded-btn border border-info bg-info-bg p-3 text-[13px] text-info">
-          En esta primera integración solo se guardan tu nombre y correo de acceso. La carrera y modalidad aún no se persisten.
-        </p>
         <div>
           <label className="flex min-h-11 cursor-pointer items-start gap-3">
             <input type="checkbox" checked={terms} onChange={(ev) => setTerms(ev.target.checked)} aria-invalid={!!e.terms}

@@ -29,6 +29,8 @@ export function TutorApp({
   sessions,
   tutorBlocks,
   threads,
+  accountId,
+  accountName,
   startAtOnboarding,
   onboardingComplete: _onboardingComplete,
   onOnboardingComplete,
@@ -45,6 +47,8 @@ export function TutorApp({
   sessions: ClassSession[]
   tutorBlocks: AvailabilityBlock[]
   threads: ConversationThread[]
+  accountId: string
+  accountName: string
   startAtOnboarding?: boolean
   onboardingComplete: boolean
   onOnboardingComplete: () => void
@@ -71,13 +75,13 @@ export function TutorApp({
   ])
   const [direction, setDirection] = useState<'forward' | 'back'>('forward')
   const [navStep, setNavStep] = useState(0)
-  const [activeSessionId, setActiveSessionId] = useState('RES-1001')
+  const [activeSessionId, setActiveSessionId] = useState('')
   const [detailSheet, setDetailSheet] = useState<DetailSheetKind | null>(null)
-  const [activeThreadId, setActiveThreadId] = useState('CONV-01')
+  const [activeThreadId, setActiveThreadId] = useState('')
   const current = history[history.length - 1]
-  const tutorSessions = sessions.filter((session) => session.tutorId === 'USR-0002')
-  const tutorThreads = threads.filter((t) => t.tutorId === 'USR-0002')
-  const blocks = tutorBlocks.filter((block) => block.tutorId === 'USR-0002')
+  const tutorSessions = sessions.filter((session) => session.tutorId === accountId)
+  const tutorThreads = threads.filter((t) => t.tutorId === accountId)
+  const blocks = tutorBlocks.filter((block) => block.tutorId === accountId)
   const selectedSession = tutorSessions.find((session) => session.id === activeSessionId) ?? tutorSessions[0]
   const selectedThread = tutorThreads.find((t) => t.id === activeThreadId) ?? tutorThreads[0]
 
@@ -128,8 +132,8 @@ export function TutorApp({
         )}
         {current === 'onboarding' && (
           <TutorOnboarding
-            onCreateAccount={({ fullName, email, password }) =>
-              register('tutor', email, password, fullName)
+            onCreateAccount={({ fullName, email, password, ...profile }) =>
+              register('tutor', email, password, fullName, profile)
             }
             onComplete={() => {
               onOnboardingComplete()
@@ -186,6 +190,7 @@ export function TutorApp({
         {current === 'home' && (
           <TutorHomeScreen
             sessions={tutorSessions}
+            fullName={accountName}
             onOpenSession={(id) => {
               setActiveSessionId(id)
               setDetailSheet(null)
@@ -248,6 +253,8 @@ export function TutorApp({
         {current === 'more' && (
           <TutorMoreScreen
             sessions={tutorSessions}
+            userId={accountId}
+            fullName={accountName}
             onMessageStudent={(session) => {
               const threadId = onEnsureThread({
                 studentId: session.studentId,

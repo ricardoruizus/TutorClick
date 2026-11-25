@@ -298,7 +298,7 @@ export function SearchScreen({
   }
   const [draft, setDraft] = useState<Filters>(applied)
   const [q, setQ] = useState(query)
-  const [localFav, setLocalFavs] = useState<string[]>(['USR-0003'])
+  const [localFav, setLocalFavs] = useState<string[]>([])
   const fav = favorites ?? localFav
   const toggleFav = (id: string) => {
     if (onToggleFavorite) onToggleFavorite(id)
@@ -430,17 +430,26 @@ export function SearchScreen({
       {eff === 'empty' && (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 bg-g50 px-8 text-center">
           <span className="grid size-16 place-items-center rounded-full bg-g200"><SearchX size={30} aria-hidden /></span>
-          <h2 className="text-[20px] font-bold">No encontramos tutores</h2>
-          <p className="text-g600">Prueba ampliar tus filtros:</p>
-          <ul className="flex flex-col gap-1 text-left text-g700">
-            <li className="flex items-center gap-2"><Check size={16} aria-hidden />Aumenta la distancia</li>
-            <li className="flex items-center gap-2"><Check size={16} aria-hidden />Baja la calificación mínima</li>
-            <li className="flex items-center gap-2"><Check size={16} aria-hidden />Quita "Solo verificados" o cambia la modalidad</li>
-          </ul>
-          <div className="mt-2 flex w-full flex-col gap-2">
-            <Button full icon={SlidersHorizontal} onClick={() => setApplied({ ...applied, km: 20, rating: 0, verified: false, mode: 'Todas', min: 100, max: 500 })}>Ampliar filtros</Button>
-            <Button full variant="text" onClick={() => { setApplied(DEFAULTS); setQ(''); setMode('list') }}>Limpiar todo</Button>
-          </div>
+          {TUTORS.length === 0 ? (
+            <>
+              <h2 className="text-[20px] font-bold">Todavía no hay tutores publicados</h2>
+              <p className="text-g600">Cuando haya perfiles disponibles, aparecerán aquí.</p>
+            </>
+          ) : (
+            <>
+              <h2 className="text-[20px] font-bold">No encontramos tutores</h2>
+              <p className="text-g600">Prueba ampliar tus filtros:</p>
+              <ul className="flex flex-col gap-1 text-left text-g700">
+                <li className="flex items-center gap-2"><Check size={16} aria-hidden />Aumenta la distancia</li>
+                <li className="flex items-center gap-2"><Check size={16} aria-hidden />Baja la calificación mínima</li>
+                <li className="flex items-center gap-2"><Check size={16} aria-hidden />Quita "Solo verificados" o cambia la modalidad</li>
+              </ul>
+              <div className="mt-2 flex w-full flex-col gap-2">
+                <Button full icon={SlidersHorizontal} onClick={() => setApplied({ ...applied, km: 20, rating: 0, verified: false, mode: 'Todas', min: 100, max: 500 })}>Ampliar filtros</Button>
+                <Button full variant="text" onClick={() => { setApplied(DEFAULTS); setQ(''); setMode('list') }}>Limpiar todo</Button>
+              </div>
+            </>
+          )}
         </div>
       )}
       {eff === 'offline' && (

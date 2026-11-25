@@ -5,7 +5,6 @@ import { StudentApp } from '../screens/alumno/student-app'
 import { TutorApp } from '../screens/tutor/tutor-app'
 import { TutorOnboarding } from '../screens/tutor/tutor-experience'
 import { AdminApp } from '../screens/admin/admin-app'
-import { INITIAL_SESSIONS, INITIAL_THREADS, INITIAL_TUTOR_BLOCKS } from '../data/mock'
 import {
   initializeAuth,
   register,
@@ -123,11 +122,10 @@ export function AppRouter() {
   const session = useAuthSession()
   const authInitialization = useAuthInitialization()
   const [entryView, setEntryView] = useState<EntryView>(() => initialEntryFromRoute(parseLocation()))
-  const [studentAccountId, setStudentAccountId] = useState<'USR-0001' | 'USR-0099'>('USR-0001')
   const [tutorOnboardingComplete, setTutorOnboardingComplete] = useState(false)
-  const [sessions, setSessions] = useState<ClassSession[]>(INITIAL_SESSIONS)
-  const [tutorBlocks, setTutorBlocks] = useState<AvailabilityBlock[]>(INITIAL_TUTOR_BLOCKS)
-  const [threads, setThreads] = useState<ConversationThread[]>(INITIAL_THREADS)
+  const [sessions, setSessions] = useState<ClassSession[]>([])
+  const [tutorBlocks, setTutorBlocks] = useState<AvailabilityBlock[]>([])
+  const [threads, setThreads] = useState<ConversationThread[]>([])
 
   useEffect(() => {
     initializeAuth()
@@ -202,7 +200,7 @@ export function AppRouter() {
     end: string
     mode: ClassMode
   }) {
-    setTutorBlocks((prev) => applyRecurringAvailabilityRule(prev, rule, 'USR-0002'))
+    setTutorBlocks((prev) => applyRecurringAvailabilityRule(prev, rule, session?.id ?? ''))
   }
 
   function handleMarkThreadRead(threadId: string, role: UserRole) {
@@ -249,15 +247,7 @@ export function AppRouter() {
       sessionId: meta.sessionId,
       unreadForStudent: 0,
       unreadForTutor: 0,
-      messages: [
-        {
-          id: `MSG-INIT-${Date.now()}`,
-          sender: 'tutor',
-          text: `Hola ${meta.studentName.split(' ')[0]}, escríbeme por aquí cualquier duda sobre la sesión de ${meta.subject}.`,
-          time: '3:50 PM',
-          read: true,
-        },
-      ],
+      messages: [],
     }
     setThreads((prev) => [created, ...prev])
     return newId
@@ -322,11 +312,14 @@ export function AppRouter() {
       >
         {session?.role === 'alumno' ? (
           <StudentApp
-            key={studentAccountId}
+            key={session.id}
             sessions={sessions}
             tutorBlocks={tutorBlocks}
             threads={threads}
-            initialStudentId={studentAccountId}
+            accountId={session.id}
+            accountName={session.fullName}
+            accountEmail={session.email}
+            initialStudentId={session.id}
             initialRoute="search"
             onAddSession={handleAddSession}
             onUpdateSession={handleUpdateSession}
@@ -340,6 +333,8 @@ export function AppRouter() {
             sessions={sessions}
             tutorBlocks={tutorBlocks}
             threads={threads}
+            accountId={session.id}
+            accountName={session.fullName}
             onboardingComplete={tutorOnboardingComplete}
             onOnboardingComplete={() => setTutorOnboardingComplete(true)}
             onTutorLogout={() => setTutorOnboardingComplete(false)}
@@ -374,10 +369,7 @@ export function AppRouter() {
                   syncPath('/')
                   setEntryView({ screen: 'welcome' })
                 }}
-                onSuccess={(loggedRole) => {
-                  if (loggedRole === 'alumno') {
-                    setStudentAccountId('USR-0001')
-                  }
+                onSuccess={() => {
                   syncPath('/')
                 }}
                 onAdminAccess={(draft) => openAdminAccess(draft)}
@@ -420,10 +412,12 @@ export function AppRouter() {
                 onBack={() =>
                   setEntryView({ screen: 'register-role', role: 'alumno', nonce: Date.now() })
                 }
-                onSuccess={async ({ fullName, email, password }) => {
-                  const result = await register('alumno', email, password, fullName)
+                onSuccess={async ({ fullName, email, password, career, preferredMode }) => {
+                  const result = await register('alumno', email, password, fullName, {
+                    career,
+                    preferredMode,
+                  })
                   if (result.ok && !result.emailConfirmationRequired) {
-                    setStudentAccountId('USR-0099')
                     syncPath('/')
                   }
                   return result
@@ -435,8 +429,8 @@ export function AppRouter() {
                 onBack={() =>
                   setEntryView({ screen: 'register-role', role: 'tutor', nonce: Date.now() })
                 }
-                onCreateAccount={({ fullName, email, password }) =>
-                  register('tutor', email, password, fullName)
+                onCreateAccount={({ fullName, email, password, ...profile }) =>
+                  register('tutor', email, password, fullName, profile)
                 }
                 onComplete={() => {
                   setTutorOnboardingComplete(true)

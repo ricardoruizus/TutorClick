@@ -106,9 +106,9 @@ export interface Alumno {
   id: string
   name: string
   photo: string
-  career: string
-  preferredMode: PreferredMode
-  zone: string
+  career: string | null
+  preferredMode: PreferredMode | null
+  zone: string | null
   email: string
 }
 export type StudentProfileData = Alumno

@@ -10,7 +10,6 @@ import { DEFAULTS, SearchScreen, type Filters } from './search'
 import {
   DEFAULT_NOTIFICATION_PREFS,
   DEFAULT_SAVED_CARDS,
-  DEFAULT_STUDENT_PROFILE,
   StudentAccountScreen,
   type NotificationPrefs,
   type SavedCardItem,
@@ -18,9 +17,14 @@ import {
 } from './student-account'
 import { ClassDetailScreen, UnifiedCalendarScreen, type DetailSheetKind } from '../../components/ui/unified-calendar'
 import type { AvailabilityBlock, ClassMode, ClassSession, ConversationThread, TutorData } from '../../types'
-import { MEETING_PLACES, TUTOR_CATALOG, formatTimeChip } from '../../data/mock'
+import { DEFAULT_STUDENT_PROFILE, MEETING_PLACES, PUBLISHED_TUTORS, formatTimeChip } from '../../data/mock'
 import { logout, register } from '../../services/auth'
 import { cancelFutureSeriesSessions as cancelFutureSeries } from '../../services/reservas'
+import {
+  getStudentProfile,
+  updateStudentProfile,
+  uploadStudentProfilePhoto,
+} from '../../services/perfiles'
 
 export type StudentRoute =
   | 'welcome' | 'login' | 'recover' | 'register-role' | 'register-student'
@@ -87,7 +91,10 @@ export function StudentApp({
   sessions,
   tutorBlocks,
   threads,
-  initialStudentId = 'USR-0001',
+  accountId,
+  accountName,
+  accountEmail,
+  initialStudentId = accountId,
   initialRoute = 'search',
   onAddSession,
   onUpdateSession,
@@ -100,6 +107,9 @@ export function StudentApp({
   sessions: ClassSession[]
   tutorBlocks: AvailabilityBlock[]
   threads: ConversationThread[]
+  accountId: string
+  accountName: string
+  accountEmail: string
   initialStudentId?: string
   initialRoute?: StudentRoute
   onAddSession: (session: ClassSession) => void
@@ -122,32 +132,85 @@ export function StudentApp({
   const [direction, setDirection] = useState<'forward' | 'back'>('forward')
   const [navStep, setNavStep] = useState(0)
   const [activeStudentId, setActiveStudentId] = useState(initialStudentId)
-  const [activeSessionId, setActiveSessionId] = useState('RES-1002')
+  const [activeSessionId, setActiveSessionId] = useState('')
   const [detailSheet, setDetailSheet] = useState<DetailSheetKind | null>(null)
-  const [activeThreadId, setActiveThreadId] = useState('CONV-01')
-  const [studentProfile, setStudentProfile] = useState<StudentProfileData>(() =>
-    initialStudentId === 'USR-0099'
-      ? { ...DEFAULT_STUDENT_PROFILE, id: 'USR-0099', name: 'Sofía Mena' }
-      : DEFAULT_STUDENT_PROFILE,
-  )
+  const [activeThreadId, setActiveThreadId] = useState('')
+  const [studentProfile, setStudentProfile] = useState<StudentProfileData>(() => ({
+    ...DEFAULT_STUDENT_PROFILE,
+    id: accountId,
+    name: accountName,
+    email: accountEmail,
+    career: null,
+    preferredMode: null,
+    zone: null,
+  }))
+  const [profileLoadError, setProfileLoadError] = useState<string | null>(null)
   const [savedCards, setSavedCards] = useState<SavedCardItem[]>(DEFAULT_SAVED_CARDS)
   const [notifPrefs, setNotifPrefs] = useState<NotificationPrefs>(DEFAULT_NOTIFICATION_PREFS)
   const [filters, setFilters] = useState<Filters>(DEFAULTS)
-  const [favorites, setFavorites] = useState<string[]>(['USR-0003'])
-  const [tutorId, setTutorId] = useState('USR-0002')
+  const [favorites, setFavorites] = useState<string[]>([])
+  const [tutorId, setTutorId] = useState('')
   const [selectedDay, setSelectedDay] = useState<number | null>(25)
   const [selectedTime, setSelectedTime] = useState('16:00')
   const [selectedMode, setSelectedMode] = useState<ClassMode>('En línea')
   const [selectedPlace, setSelectedPlace] = useState(MEETING_PLACES[0])
   const [booking, setBooking] = useState<BookingSelection | null>(null)
   const [paymentState, setPaymentState] = useState<SavedPaymentState>(DEFAULT_PAYMENT_STATE)
-  const [confirmedCard, setConfirmedCard] = useState('Visa •••• 4242')
+  const [confirmedCard, setConfirmedCard] = useState('')
   const [holdSeconds, setHoldSeconds] = useState(600)
   const [isProcessingPayment, setIsProcessingPayment] = useState(false)
   const [expiredNotice, setExpiredNotice] = useState<string | null>(null)
 
   const current = history[history.length - 1]
-  const tutor = TUTOR_CATALOG.find((item) => item.id === tutorId) ?? TUTOR_CATALOG[0]
+  const tutor = PUBLISHED_TUTORS.find((item) => item.id === tutorId)
+
+  useEffect(() => {
+    let active = true
+    void getStudentProfile(accountId)
+      .then((profile) => {
+        if (!active) return
+        setStudentProfile((currentProfile) => ({
+          ...currentProfile,
+          id: accountId,
+          name: accountName,
+          email: accountEmail,
+          career: profile.career,
+          preferredMode: profile.preferredMode,
+          zone: profile.serviceZone,
+          photo: profile.photoUrl ?? DEFAULT_STUDENT_PROFILE.photo,
+        }))
+        setProfileLoadError(null)
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setProfileLoadError(error instanceof Error ? error.message : 'No se pudo cargar el perfil.')
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [accountId, accountEmail, accountName])
+
+  async function saveStudentProfile(patch: Partial<StudentProfileData>) {
+    if (!patch.career || !patch.preferredMode || !patch.zone) {
+      throw new Error('Completa carrera, modalidad y zona antes de guardar.')
+    }
+    const fullName = patch.name?.trim() || studentProfile.name
+    await updateStudentProfile(accountId, {
+      fullName,
+      career: patch.career,
+      preferredMode: patch.preferredMode,
+      serviceZone: patch.zone,
+    })
+    setStudentProfile((currentProfile) => ({ ...currentProfile, ...patch, name: fullName }))
+    setProfileLoadError(null)
+  }
+
+  async function saveStudentPhoto(file: File): Promise<string | undefined> {
+    const result = await uploadStudentProfilePhoto(accountId, file)
+    setStudentProfile((currentProfile) => ({ ...currentProfile, photo: result.photoUrl }))
+    return result.warning
+  }
   const studentSessions = useMemo(
     () => sessions.filter((session) => session.studentId === activeStudentId),
     [sessions, activeStudentId],
@@ -181,7 +244,8 @@ export function StudentApp({
   }
 
   function selectTutor(id: string, destination: StudentRoute = 'profile') {
-    const nextTutor = TUTOR_CATALOG.find((item) => item.id === id) ?? TUTOR_CATALOG[0]
+    const nextTutor = PUBLISHED_TUTORS.find((item) => item.id === id)
+    if (!nextTutor) return
     const firstDay = nextTutor.schedule[25] ? 25 : Number(Object.keys(nextTutor.schedule)[0] ?? 25)
     setTutorId(nextTutor.id)
     setSelectedDay(firstDay)
@@ -233,8 +297,13 @@ export function StudentApp({
             embedded
             onBack={goBack}
             onSuccess={() => {
-              setActiveStudentId('USR-0001')
-              setStudentProfile(DEFAULT_STUDENT_PROFILE)
+              setActiveStudentId(accountId)
+              setStudentProfile((currentProfile) => ({
+                ...currentProfile,
+                id: accountId,
+                name: accountName,
+                email: accountEmail,
+              }))
               push('search')
             }}
             onForgot={() => push('recover')}
@@ -249,15 +318,21 @@ export function StudentApp({
           <StudentForm
             embedded
             onBack={goBack}
-            onSuccess={async ({ fullName, email, password }) => {
-              const result = await register('alumno', email, password, fullName)
-              if (!result.ok || result.emailConfirmationRequired) return result
-              setActiveStudentId('USR-0099')
-              setStudentProfile({
-                ...DEFAULT_STUDENT_PROFILE,
-                id: 'USR-0099',
-                name: 'Sofía Mena',
+            onSuccess={async ({ fullName, email, password, career, preferredMode }) => {
+              const result = await register('alumno', email, password, fullName, {
+                career,
+                preferredMode,
               })
+              if (!result.ok || result.emailConfirmationRequired) return result
+              setActiveStudentId(accountId)
+              setStudentProfile((currentProfile) => ({
+                ...currentProfile,
+                id: accountId,
+                name: fullName,
+                email,
+                career: career || null,
+                preferredMode,
+              }))
               push('search')
               return result
             }}
@@ -339,7 +414,9 @@ export function StudentApp({
         {current === 'account' && (
           <StudentAccountScreen
             profile={studentProfile}
-            onUpdateProfile={(patch) => setStudentProfile((prev) => ({ ...prev, ...patch }))}
+            profileError={profileLoadError}
+            onUpdateProfile={saveStudentProfile}
+            onUpdatePhoto={saveStudentPhoto}
             sessions={studentSessions}
             favorites={favorites}
             onToggleFavorite={(id) =>
@@ -371,7 +448,7 @@ export function StudentApp({
             onTabSelect={handleTabSelect}
           />
         )}
-        {current === 'profile' && (
+        {current === 'profile' && tutor && (
           <TutorProfile
             embedded
             p={toProfile(tutor)}
@@ -398,7 +475,7 @@ export function StudentApp({
             }}
           />
         )}
-        {current === 'booking' && (
+        {current === 'booking' && tutor && (
           <BookingScreen
             embedded
             minDay={25}
@@ -425,9 +502,10 @@ export function StudentApp({
             }}
           />
         )}
-        {current === 'checkout' && (
+        {current === 'checkout' && tutor && (
           <CheckoutScreen
             embedded
+            showSavedCard={false}
             tutor={tutor}
             day={selectedDay ?? 25}
             time={selectedTime}
@@ -485,7 +563,7 @@ export function StudentApp({
             }}
           />
         )}
-        {current === 'confirmed' && (
+        {current === 'confirmed' && tutor && (
           <ConfirmedScreen
             embedded
             tutor={tutor}

@@ -45,7 +45,7 @@ import {
   formatMoney,
   formatTimeChip,
 } from '../../data/mock'
-import type { ClassSession } from '../../types'
+import type { ClassBookingRecord, ClassSession } from '../../types'
 import type { RegistrationResult, TutorRegistrationProfile } from '../../services/auth'
 import {
   createTutorCredentialUrl,
@@ -59,6 +59,42 @@ import {
 } from '../../services/perfiles'
 
 const cx = (...values: (string | false | undefined)[]) => values.filter(Boolean).join(' ')
+const ACTIVE_BOOKING_STATUSES: ClassBookingRecord['status'][] = [
+  'pending_confirmation',
+  'confirmed',
+  'reschedule_pending',
+]
+const BOOKING_STATUS_LABELS: Record<ClassBookingRecord['status'], string> = {
+  pending_confirmation: 'Pendiente de respuesta',
+  confirmed: 'Confirmada',
+  rejected: 'Rechazada',
+  cancelled: 'Cancelada',
+  reschedule_pending: 'Cambio pendiente',
+  completed: 'Finalizada',
+}
+
+function meridaDateKey(value: string | Date): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Merida',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date(value))
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((item) => item.type === type)?.value ?? ''
+  return `${part('year')}-${part('month')}-${part('day')}`
+}
+
+function formatBookingDateTime(value: string): string {
+  return new Intl.DateTimeFormat('es-MX', {
+    timeZone: 'America/Merida',
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date(value))
+}
 
 export const tutorMainNav: typeof studentNav = [
   ['Inicio', Home],
@@ -125,8 +161,10 @@ export function TutorOnboarding({
   const [availableDays, setAvailableDays] = useState<string[]>([])
   const [startTime, setStartTime] = useState('16:00')
   const [endTime, setEndTime] = useState('19:00')
+  const [selectedAvailabilityMode, setSelectedAvailabilityMode] = useState<TutorClassMode | ''>('')
   const [error, setError] = useState<string | null>(null)
   const [submissionNotice, setSubmissionNotice] = useState<string | null>(null)
+  const availabilityMode = modes.length === 1 ? modes[0] : selectedAvailabilityMode
 
   function validateStep() {
     if (step === 1 && (!name.trim() || !email.includes('@') || password.length < 8)) {
@@ -141,8 +179,16 @@ export function TutorOnboarding({
       setError('Adjunta tu título y tu cédula para continuar.')
       return false
     }
-    if (step === 4 && availableDays.length === 0) {
-      setError('Selecciona al menos un día con disponibilidad.')
+    if (step === 4 && (
+      availableDays.length === 0 ||
+      !availabilityMode ||
+      !modes.includes(availabilityMode)
+    )) {
+      setError(
+        availableDays.length === 0
+          ? 'Selecciona al menos un día con disponibilidad.'
+          : 'Elige una modalidad para los horarios seleccionados.',
+      )
       return false
     }
     setError(null)
@@ -182,6 +228,10 @@ export function TutorOnboarding({
         setError('Adjunta tu título y tu cédula antes de crear la cuenta.')
         return
       }
+      if (!availabilityMode) {
+        setError('Elige una modalidad para los horarios seleccionados.')
+        return
+      }
       const result = await onCreateAccount({
         fullName: name.trim(),
         email,
@@ -193,6 +243,10 @@ export function TutorOnboarding({
         classModes: modes,
         serviceZone: zone,
         travelRadiusKm: Number(radius),
+        availabilityWeekdays: availableDays.map((day) => WEEK_DAYS.indexOf(day) + 1),
+        availabilityStartTime: startTime,
+        availabilityEndTime: endTime,
+        availabilityMode,
         titleDocument,
         licenseDocument,
       })
@@ -233,26 +287,32 @@ export function TutorOnboarding({
               </>
             ) : (
               <>
-                <h1 className="mt-3 text-[22px] font-bold">Cuenta creada; perfil profesional pendiente</h1>
+                <h1 className="mt-3 text-[22px] font-bold">
+                  {onCreateAccount ? 'Cuenta creada; perfil profesional pendiente' : 'Vista de demostración'}
+                </h1>
                 <p className="mt-2 text-[14px] text-g600">
-                  El guardado del perfil, disponibilidad y documentos todavía no está conectado.
+                  {onCreateAccount
+                    ? 'Tu perfil y disponibilidad se guardaron. El perfil quedará visible cuando se verifiquen tus credenciales.'
+                    : 'Esta vista no creó una cuenta ni guardó datos.'}
                 </p>
               </>
             )}
           </section>
 
-          {!confirmationRequired && (
+          {!confirmationRequired && !onCreateAccount && (
             <div className="mt-4 rounded-card border border-warn bg-warn-bg p-3.5 text-[14px] text-warn">
-              Solo se creó la cuenta. El perfil profesional, la disponibilidad y los documentos aún no se guardan en la base de datos.
+              Los datos de esta vista de demostración no se guardan en la base de datos.
             </div>
           )}
 
-          <div className="mt-4 rounded-card border border-info bg-info-bg p-3.5 text-[14px] text-info">
-            <p className="flex items-start gap-2 font-semibold">
-              <ShieldCheck size={18} className="mt-0.5 shrink-0" aria-hidden />
-              Los datos del perfil se guardan en tu cuenta. La disponibilidad se conectará en una siguiente etapa.
-            </p>
-          </div>
+          {confirmationRequired && (
+            <div className="mt-4 rounded-card border border-info bg-info-bg p-3.5 text-[14px] text-info">
+              <p className="flex items-start gap-2 font-semibold">
+                <ShieldCheck size={18} className="mt-0.5 shrink-0" aria-hidden />
+                Tu perfil y disponibilidad ya están guardados. Confirma el correo para entrar y completar la carga de credenciales.
+              </p>
+            </div>
+          )}
           {submissionNotice && (
             <p role="status" className="mt-3 rounded-card border border-warn bg-warn-bg p-3.5 text-[14px] font-semibold text-warn">
               {submissionNotice}
@@ -470,6 +530,28 @@ export function TutorOnboarding({
                 <p className="mt-3 flex items-center gap-1.5 text-[12px] text-g600">
                   <Clock size={14} aria-hidden /> Hora de Mérida (UTC-6)
                 </p>
+                {modes.length > 1 ? (
+                  <label className="mt-4 flex flex-col gap-1.5 text-[13px] font-semibold text-g700">
+                    Modalidad para estos horarios
+                    <select
+                      value={selectedAvailabilityMode}
+                      onChange={(event) => {
+                        const value = event.target.value
+                        setSelectedAvailabilityMode(
+                          value === 'Presencial' || value === 'En línea' ? value : '',
+                        )
+                      }}
+                      className="min-h-12 rounded-btn border border-g500 bg-white px-3 text-[14px] text-ink"
+                    >
+                      <option value="">Elige una modalidad</option>
+                      {modes.map((mode) => <option key={mode} value={mode}>{mode}</option>)}
+                    </select>
+                  </label>
+                ) : (
+                  <p className="mt-4 text-[13px] font-semibold text-g700">
+                    Modalidad para estos horarios: {availabilityMode}
+                  </p>
+                )}
               </section>
             </>
           )}
@@ -493,11 +575,11 @@ export function TutorOnboarding({
                   <div><dt className="text-[12px] font-semibold text-g600">Tarifa</dt><dd className="font-bold">{formatMoney(Number(rate))}/h</dd></div>
                   <div><dt className="text-[12px] font-semibold text-g600">Modalidad y zona</dt><dd className="font-bold">{modes.join(' y ')} · {zone}, {radius} km</dd></div>
                   <div><dt className="text-[12px] font-semibold text-g600">Credenciales</dt><dd className="flex items-center gap-1.5 font-bold text-g700"><FileCheck2 size={16} aria-hidden /> {titleFile} · {licenseFile}</dd></div>
-                  <div><dt className="text-[12px] font-semibold text-g600">Disponibilidad</dt><dd className="font-bold">{availableDays.join(', ')} · {formatTimeChip(startTime)} a {formatTimeChip(endTime)}</dd></div>
+                  <div><dt className="text-[12px] font-semibold text-g600">Disponibilidad</dt><dd className="font-bold">{availableDays.join(', ')} · {formatTimeChip(startTime)} a {formatTimeChip(endTime)} · {availabilityMode}</dd></div>
                 </dl>
               </section>
               <div className="rounded-card border border-g200 bg-white p-4 text-[13px] text-g700">
-                El perfil profesional se guardará en Supabase. Los horarios seleccionados aún no se persisten.
+                Tu disponibilidad semanal se guardará en Supabase junto con el registro. Cada horario tendrá una sola modalidad.
               </div>
             </>
           )}
@@ -525,12 +607,18 @@ export function TutorOnboarding({
 
 export function TutorHomeScreen({
   sessions,
+  bookings,
+  bookingsLoading,
+  bookingsError,
   fullName,
   onOpenSession,
   onStartSession,
   onTabSelect,
 }: {
   sessions: ClassSession[]
+  bookings: ClassBookingRecord[]
+  bookingsLoading: boolean
+  bookingsError: string | null
   fullName: string
   onOpenSession: (id: string) => void
   onStartSession: (id: string) => void
@@ -543,6 +631,12 @@ export function TutorHomeScreen({
     year: 'numeric',
     timeZone: 'America/Merida',
   }).format(now).replace(' de ', ' ').toLowerCase()
+  const activeBookings = bookings
+    .filter((booking) => ACTIVE_BOOKING_STATUSES.includes(booking.status))
+    .sort((a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt))
+  const todayKey = meridaDateKey(now)
+  const todayBookings = activeBookings.filter((booking) => meridaDateKey(booking.startsAt) === todayKey)
+  const upcomingBookings = activeBookings.filter((booking) => Date.parse(booking.startsAt) > now.getTime())
   const today = sessions.filter((item) =>
     item.day === meridaDate.getDate() &&
     (!item.monthLabel || item.monthLabel.toLowerCase() === todayMonth) &&
@@ -565,7 +659,7 @@ export function TutorHomeScreen({
       <TopBar title="Inicio" />
       <div className="flex-1 overflow-y-auto bg-g50 p-4">
         <ListState
-          count={sessions.length}
+          count={sessions.length + activeBookings.length + Number(bookingsLoading) + Number(!!bookingsError)}
           emptyTitle="Aún no tienes clases"
           emptyDescription="Publica disponibilidad para recibir tu primera reserva."
           emptyAction="Ir al calendario"
@@ -583,7 +677,7 @@ export function TutorHomeScreen({
             <div className="mb-2 flex items-center justify-between">
               <h2 className="text-[18px] font-bold">Hoy</h2>
               <span className="inline-flex min-h-7 items-center gap-1 rounded-full bg-info-bg px-3 text-[12px] font-bold text-info">
-                <CalendarDays size={14} aria-hidden /> {today.length} clases
+                <CalendarDays size={14} aria-hidden /> {today.length + todayBookings.length} clases
               </span>
             </div>
             <div className="flex flex-col gap-2.5">
@@ -603,8 +697,67 @@ export function TutorHomeScreen({
                   )}
                 </article>
               ))}
+              {todayBookings.map((booking) => (
+                <button
+                  key={booking.id}
+                  type="button"
+                  onClick={() => onTabSelect(1)}
+                  className="flex w-full items-start justify-between gap-2 rounded-card border border-g200 bg-white p-4 text-left shadow-sm hover:border-ink"
+                >
+                  <span>
+                    <span className="block font-bold">
+                      {formatBookingDateTime(booking.startsAt)} · {booking.subject}
+                    </span>
+                    <span className="mt-1 block text-[14px] text-g600">
+                      {booking.studentName} · {booking.mode}
+                    </span>
+                  </span>
+                  <span className="shrink-0 rounded-full bg-g100 px-2.5 py-1 text-[12px] font-bold">
+                    {BOOKING_STATUS_LABELS[booking.status]}
+                  </span>
+                </button>
+              ))}
             </div>
           </section>
+
+          {upcomingBookings.length > 0 && (
+            <section className="rounded-card border border-g200 bg-white p-4">
+              <div className="mb-3 flex items-center justify-between">
+                <h2 className="text-[17px] font-bold">Próximas reservas y clases</h2>
+                <button type="button" onClick={() => onTabSelect(1)} className="min-h-11 font-semibold underline underline-offset-4">
+                  Ver calendario
+                </button>
+              </div>
+              <div className="flex flex-col gap-2">
+                {upcomingBookings.slice(0, 4).map((booking) => (
+                  <button
+                    key={booking.id}
+                    type="button"
+                    onClick={() => onTabSelect(1)}
+                    className="flex min-h-14 w-full items-center justify-between gap-3 rounded-btn bg-g100 px-3 text-left"
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate font-bold">
+                        {booking.studentName} · {booking.subject}
+                      </span>
+                      <span className="block text-[12px] text-g600">
+                        {formatBookingDateTime(booking.startsAt)} · {booking.mode}
+                      </span>
+                    </span>
+                    <span className="shrink-0 rounded-full bg-white px-2.5 py-1 text-[12px] font-bold">
+                      {BOOKING_STATUS_LABELS[booking.status]}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {bookingsError && (
+            <p role="alert" className="rounded-card border border-err bg-err-bg p-3 text-[13px] font-semibold text-err">
+              {bookingsError}
+            </p>
+          )}
 
           <section className="rounded-card border border-g200 bg-white p-4">
             <div className="flex items-center justify-between">

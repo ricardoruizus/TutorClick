@@ -25,6 +25,7 @@ const MERIDA_TIME_ZONE = 'America/Merida'
 
 export interface BookingSelection {
   startsAt: string
+  subject: string
   mode: ClassMode
   place: string | null
 }
@@ -160,10 +161,14 @@ export function BookingScreen({
     [availability, tutor],
   )
   const [selectedKey, setSelectedKey] = useState('')
+  const [selectedSubject, setSelectedSubject] = useState(
+    tutor.subjects.length === 1 ? tutor.subjects[0] : '',
+  )
   const [place, setPlace] = useState(MEETING_PLACES[0])
   const selectedSlot = slots.find((slot) => `${slot.startsAt}-${slot.mode}` === selectedKey)
   useEffect(() => {
     setSelectedKey('')
+    setSelectedSubject(tutor.subjects.length === 1 ? tutor.subjects[0] : '')
   }, [tutor.id])
   const groupedSlots = slots.reduce<Record<string, AvailableClassSlot[]>>((groups, slot) => {
     const dateKey = formatBookingDate(slot.startsAt, {
@@ -189,13 +194,14 @@ export function BookingScreen({
             <p className="text-[13px] text-g600">El Tutor debe confirmarla</p>
           </div>
           <Button
-            disabled={!selectedSlot || availabilityLoading}
+            disabled={!selectedSlot || !selectedSubject || availabilityLoading}
             loading={requestLoading}
             className="min-w-36"
             onClick={() => {
-              if (!selectedSlot) return
+              if (!selectedSlot || !selectedSubject) return
               onContinue?.({
                 startsAt: selectedSlot.startsAt,
+                subject: selectedSubject,
                 mode: selectedSlot.mode,
                 place: selectedSlot.mode === 'Presencial' ? place : null,
               })
@@ -208,6 +214,21 @@ export function BookingScreen({
     >
       <div className="flex flex-col gap-4 p-4 md:mx-auto md:w-full md:max-w-2xl">
         <TutorMini tutor={tutor} />
+        {tutor.subjects.length > 1 && (
+          <label className="flex flex-col gap-1.5 text-[13px] font-semibold text-g700">
+            Materia
+            <select
+              value={selectedSubject}
+              onChange={(event) => setSelectedSubject(event.target.value)}
+              className="min-h-12 rounded-btn border border-g500 bg-white px-3 text-[14px] text-ink"
+            >
+              <option value="">Elige una materia</option>
+              {tutor.subjects.map((subject) => (
+                <option key={subject} value={subject}>{subject}</option>
+              ))}
+            </select>
+          </label>
+        )}
         {requestError && (
           <div role="alert" className="flex items-start gap-2 rounded-card border-2 border-err bg-err-bg p-3 text-[14px] font-semibold text-err">
             <AlertTriangle size={18} className="mt-0.5 shrink-0" aria-hidden />

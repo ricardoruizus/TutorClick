@@ -270,7 +270,7 @@ export function MessagesListScreen({
                       </span>
                     </div>
                     <p className="text-[12px] font-semibold text-g600">
-                      {thread.subject} · {linkedSession ? linkedSession.id : thread.sessionId}
+                      {thread.subject}{linkedSession ? ` · ${linkedSession.id}` : ''}
                     </p>
                     {lastMsg && (
                       <p
@@ -341,7 +341,7 @@ export function ConversationScreen({
     setActionError(null)
     try {
       await onSendMessage({
-        text: clean || 'Archivo adjunto compartido para la sesión.',
+        text: clean || 'Archivo adjunto compartido.',
         attachmentName: attachmentFile?.name,
         attachmentFile: attachmentFile ?? undefined,
       })
@@ -384,32 +384,31 @@ export function ConversationScreen({
         </div>
       </header>
 
-      {/* Chip de la clase vinculada con "Ver clase" */}
-      <div className="flex items-center justify-between gap-2 border-b border-g200 bg-g50 px-3.5 py-2">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="inline-flex items-center gap-1 rounded-full bg-white px-2.5 py-0.5 text-[12px] font-bold text-ink border border-g300">
-              <CalendarDays size={12} aria-hidden />
-              {linkedSession ? linkedSession.id : thread.sessionId}
-            </span>
-            {linkedSession && <StatusChip status={linkedSession.status} />}
-          </div>
-          {linkedSession && (
+      {linkedSession && (
+        <div className="flex items-center justify-between gap-2 border-b border-g200 bg-g50 px-3.5 py-2">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="inline-flex items-center gap-1 rounded-full border border-g300 bg-white px-2.5 py-0.5 text-[12px] font-bold text-ink">
+                <CalendarDays size={12} aria-hidden />
+                {linkedSession.id}
+              </span>
+              <StatusChip status={linkedSession.status} />
+            </div>
             <p className="mt-1 truncate text-[12px] text-g700">
               {DAY_SHORT_LABELS[linkedSession.day]?.replace(' de noviembre', ' nov')} ·{' '}
               {formatTimeChip(linkedSession.time)} · {linkedSession.mode}
             </p>
-          )}
+          </div>
+          <button
+            type="button"
+            onClick={() => onViewClass(linkedSession.id)}
+            className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded-btn border-2 border-ink bg-white px-3 text-[12px] font-semibold text-ink hover:bg-g100"
+          >
+            Ver clase
+            <ChevronRight size={15} aria-hidden />
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={() => onViewClass(linkedSession ? linkedSession.id : thread.sessionId)}
-          className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded-btn border-2 border-ink bg-white px-3 text-[12px] font-semibold text-ink hover:bg-g100"
-        >
-          Ver clase
-          <ChevronRight size={15} aria-hidden />
-        </button>
-      </div>
+      )}
 
       {/* Banner permanente de protección */}
       <div

@@ -200,6 +200,7 @@ export function StudentApp({
   const [requestError, setRequestError] = useState<string | null>(null)
   const [requestLoading, setRequestLoading] = useState(false)
   const [classBookings, setClassBookings] = useState<ClassBookingRecord[]>([])
+  const [bookingsLoading, setBookingsLoading] = useState(true)
   const [bookingsError, setBookingsError] = useState<string | null>(null)
   const [classNotifications, setClassNotifications] = useState<ClassNotificationRecord[]>([])
   const [notificationsError, setNotificationsError] = useState<string | null>(null)
@@ -241,8 +242,8 @@ export function StudentApp({
   }, [accountId, tutorsRefreshKey])
 
   useEffect(() => {
-    if (current !== 'calendar') return
     let active = true
+    setBookingsLoading(true)
     void listMyClassBookings()
       .then((items) => {
         if (!active) return
@@ -254,6 +255,17 @@ export function StudentApp({
           setBookingsError(error instanceof Error ? error.message : 'No se pudieron cargar las solicitudes.')
         }
       })
+      .finally(() => {
+        if (active) setBookingsLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [accountId, bookingsTick])
+
+  useEffect(() => {
+    if (current !== 'calendar') return
+    let active = true
     void listMyClassNotifications()
       .then((items) => {
         if (!active) return
@@ -381,6 +393,15 @@ export function StudentApp({
     () => sessions.filter((session) => session.studentId === activeStudentId),
     [sessions, activeStudentId],
   )
+  const nextBooking = useMemo(
+    () => classBookings
+      .filter((booking) =>
+        ['pending_confirmation', 'confirmed', 'reschedule_pending'].includes(booking.status) &&
+        Date.parse(booking.startsAt) > Date.now(),
+      )
+      .sort((a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt))[0],
+    [classBookings],
+  )
   const studentThreads = useMemo(
     () => threads.filter((t) => t.studentId === activeStudentId),
     [threads, activeStudentId],
@@ -457,12 +478,21 @@ export function StudentApp({
     }
   }
 
-  const upcomingBanner = nextSession ? {
-    text: `Tu próxima clase: ${nextSession.day === 24 ? 'mañana' : 'hoy'} ${formatTimeChip(nextSession.time)} con ${nextSession.tutorName}`,
-    onClick: () => {
-      openSessionDetail(nextSession.id)
-    },
-  } : null
+  const upcomingBanner = nextBooking
+    ? {
+        text: `${nextBooking.status === 'pending_confirmation' ? 'Solicitud pendiente' : 'Tu próxima clase'}: ${formatBookingDate(nextBooking.startsAt, {
+          weekday: 'long',
+          day: 'numeric',
+          month: 'long',
+        })} · ${formatBookingDate(nextBooking.startsAt, { hour: 'numeric', minute: '2-digit' })} con ${nextBooking.tutorName}`,
+        onClick: () => push('calendar'),
+      }
+    : !bookingsLoading && nextSession
+      ? {
+          text: `Tu próxima clase: ${nextSession.day === 24 ? 'mañana' : 'hoy'} ${formatTimeChip(nextSession.time)} con ${nextSession.tutorName}`,
+          onClick: () => openSessionDetail(nextSession.id),
+        }
+      : null
 
   return (
     <AppShell label="Aplicación del Alumno">
@@ -681,7 +711,7 @@ export function StudentApp({
                 tutorName: tutor.name,
                 tutorPhoto: tutor.photo,
                 subject: tutor.subjects[0],
-                sessionId: existingClass?.id ?? 'RES-1001',
+                sessionId: existingClass?.id ?? '',
               })
             }}
             onBook={() => push('booking')}
@@ -708,7 +738,7 @@ export function StudentApp({
                 const id = await requestTutorClassBooking({
                   tutorUserId: tutor.id,
                   startsAt: selection.startsAt,
-                  subject: tutor.subjects[0] ?? '',
+                  subject: selection.subject,
                   mode: selection.mode,
                   location: selection.place,
                 })
@@ -762,6 +792,7 @@ export function StudentApp({
                     year: 'numeric',
                   })}
                 </p>
+                <p className="mt-1 text-[14px] font-medium text-g700">{requestedBooking.subject}</p>
                 <p className="mt-1 text-[14px] text-g600">
                   {formatBookingDate(requestedBooking.startsAt, { hour: 'numeric', minute: '2-digit' })}
                   {' · '}{requestedBooking.mode}

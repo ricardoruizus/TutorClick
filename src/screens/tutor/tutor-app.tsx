@@ -113,6 +113,7 @@ export function TutorApp({
   const [activeThreadId, setActiveThreadId] = useState('')
   const [weeklyAvailability, setWeeklyAvailability] = useState<TutorWeeklyAvailability[]>([])
   const [bookings, setBookings] = useState<ClassBookingRecord[]>([])
+  const [bookingsLoading, setBookingsLoading] = useState(true)
   const [availabilityLoading, setAvailabilityLoading] = useState(true)
   const [availabilityError, setAvailabilityError] = useState<string | null>(null)
   const [bookingsError, setBookingsError] = useState<string | null>(null)
@@ -159,8 +160,8 @@ export function TutorApp({
   }, [accountId])
 
   useEffect(() => {
-    if (current !== 'calendar') return
     let active = true
+    setBookingsLoading(true)
     void listMyClassBookings()
       .then((items) => {
         if (!active) return
@@ -172,6 +173,17 @@ export function TutorApp({
           setBookingsError(error instanceof Error ? error.message : 'No se pudieron cargar las solicitudes.')
         }
       })
+      .finally(() => {
+        if (active) setBookingsLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [accountId, bookingsTick])
+
+  useEffect(() => {
+    if (current !== 'calendar') return
+    let active = true
     void listMyClassNotifications()
       .then((items) => {
         if (!active) return
@@ -423,6 +435,9 @@ export function TutorApp({
         {current === 'home' && (
           <TutorHomeScreen
             sessions={tutorSessions}
+            bookings={bookings}
+            bookingsLoading={bookingsLoading}
+            bookingsError={bookingsError}
             fullName={accountName}
             onOpenSession={(id) => {
               setActiveSessionId(id)

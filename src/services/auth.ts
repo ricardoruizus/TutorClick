@@ -61,6 +61,10 @@ export interface TutorRegistrationProfile {
   classModes: TutorClassMode[]
   serviceZone: string
   travelRadiusKm: number
+  availabilityWeekdays: number[]
+  availabilityStartTime: string
+  availabilityEndTime: string
+  availabilityMode: TutorClassMode
   titleDocument: File
   licenseDocument: File
 }
@@ -150,18 +154,23 @@ async function updateSessionFromAuth(authSession?: Session | null): Promise<stri
       activeSession = data.session
     }
 
+    if (requestId !== sessionRequest) return null
+
     if (!activeSession?.user) {
       currentSession = null
       authInitializationState = { initialized: authInitializationState.initialized, error: null }
     } else {
-      currentSession = await loadAuthSession(
+      const loadedSession = await loadAuthSession(
         activeSession.user.id,
         activeSession.user.email ?? '',
       )
+      if (requestId !== sessionRequest) return null
+      currentSession = loadedSession
       authInitializationState = { initialized: authInitializationState.initialized, error: null }
     }
     return null
   } catch (error) {
+    if (requestId !== sessionRequest) return null
     currentSession = null
     const message = error instanceof Error ? error.message : 'No se pudo restaurar la sesión.'
     authInitializationState = {
@@ -372,7 +381,7 @@ export async function register(
   profile: RegistrationProfile,
 ): Promise<RegistrationResult> {
   try {
-    let metadata: Record<string, string | number | string[]>
+    let metadata: Record<string, string | number | string[] | number[]>
     if (role === 'alumno' && 'career' in profile) {
       metadata = {
         career: profile.career,
@@ -387,6 +396,10 @@ export async function register(
         class_modes: profile.classModes,
         service_zone: profile.serviceZone,
         travel_radius_km: profile.travelRadiusKm,
+        availability_weekdays: profile.availabilityWeekdays,
+        availability_start_time: profile.availabilityStartTime,
+        availability_end_time: profile.availabilityEndTime,
+        availability_mode: profile.availabilityMode,
       }
     } else {
       return { ok: false, message: 'Los datos del perfil no coinciden con el rol seleccionado.' }

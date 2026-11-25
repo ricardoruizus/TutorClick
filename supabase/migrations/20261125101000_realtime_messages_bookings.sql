@@ -15,7 +15,14 @@ do $$
 declare
   table_name text;
 begin
-  foreach table_name in array['conversation_messages', 'conversations', 'class_bookings', 'class_notifications'] loop
+  for table_name in
+    select unnest(array[
+      'conversation_messages',
+      'conversations',
+      'class_bookings',
+      'class_notifications'
+    ]::text[])
+  loop
     if not exists (
       select 1
       from pg_publication_tables

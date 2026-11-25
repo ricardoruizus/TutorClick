@@ -1,0 +1,42 @@
+@theme {
+  /* Tipografía */
+  --font-sans: 'Inter', system-ui, sans-serif;
+  --text-xs: 12px;
+  --text-sm: 14px;
+  --text-base: 16px;
+  --text-lg: 18px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+  --text-3xl: 28px;
+  --text-4xl: 32px;
+  --text-5xl: 40px;
+
+  /* Colores base y semánticos */
+  --color-ink: #111111;
+  --color-g50: #fafafa;
+  --color-g100: #f4f4f5;
+  --color-g200: #e4e4e7;
+  --color-g300: #d4d4d8;
+  --color-g500: #6b6b73;
+  --color-g600: #52525b;
+  --color-g700: #3f3f46;
+  --color-white: #ffffff;
+  --color-ok: #166534;
+  --color-ok-bg: #dcfce7;
+  --color-warn: #92400e;
+  --color-warn-bg: #fef3c7;
+  --color-err: #b91c1c;
+  --color-err-bg: #fee2e2;
+  --color-info: #1d4ed8;
+  --color-info-bg: #dbeafe;
+
+  /* Radios */
+  --radius-btn: 12px;
+  --radius-card: 16px;
+  --radius-sheet: 24px;
+  --radius-frame: 28px;
+  --radius-pill: 9999px;
+
+  /* Espaciados base (múltiplos de 4 px) */
+  --spacing: 4px;
+}

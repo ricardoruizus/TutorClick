@@ -1,0 +1,10 @@
+{
+  "description": "Conecta alumnos de Mérida con tutores particulares para buscar, reservar y pagar clases presenciales o en línea con pagos protegidos y reseñas.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}

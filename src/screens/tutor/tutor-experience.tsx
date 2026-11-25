@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle,
   BadgeCheck,
@@ -33,7 +33,7 @@ import {
   WalletCards,
   X,
 } from 'lucide-react'
-import { BottomNav, Button, StatusChip, TopBar, studentNav } from '../../components/ui/ds'
+import { BottomNav, Button, StatusChip, TopBar, studentNav, type ChipKey } from '../../components/ui/ds'
 import { ListState } from '../../components/ui/list-state'
 import { calcTutorNet } from '../../services/pagos'
 import {
@@ -46,7 +46,17 @@ import {
   formatTimeChip,
 } from '../../data/mock'
 import type { ClassSession } from '../../types'
-import type { RegistrationResult } from '../../services/auth'
+import type { RegistrationResult, TutorRegistrationProfile } from '../../services/auth'
+import {
+  createTutorCredentialUrl,
+  getTutorProfile,
+  updateTutorProfile,
+  uploadTutorCredential,
+  uploadTutorProfilePhoto,
+  type TutorClassMode,
+  type TutorCredentialKind,
+  type TutorProfileRecord,
+} from '../../services/perfiles'
 
 const cx = (...values: (string | false | undefined)[]) => values.filter(Boolean).join(' ')
 
@@ -91,7 +101,7 @@ export function TutorOnboarding({
   onBack,
 }: {
   onComplete: () => void
-  onCreateAccount?: (details: { fullName: string; email: string; password: string }) => Promise<RegistrationResult>
+  onCreateAccount?: (details: { fullName: string; email: string; password: string } & TutorRegistrationProfile) => Promise<RegistrationResult>
   onBack?: () => void
 }) {
   const [step, setStep] = useState(1)
@@ -105,26 +115,29 @@ export function TutorOnboarding({
   const [selectedSubjects, setSelectedSubjects] = useState<string[]>([])
   const [level, setLevel] = useState('')
   const [rate, setRate] = useState('')
-  const [modes, setModes] = useState<string[]>([])
+  const [modes, setModes] = useState<TutorClassMode[]>([])
   const [zone, setZone] = useState('')
   const [radius, setRadius] = useState('')
   const [titleFile, setTitleFile] = useState('')
   const [licenseFile, setLicenseFile] = useState('')
+  const [titleDocument, setTitleDocument] = useState<File | null>(null)
+  const [licenseDocument, setLicenseDocument] = useState<File | null>(null)
   const [availableDays, setAvailableDays] = useState<string[]>([])
   const [startTime, setStartTime] = useState('16:00')
   const [endTime, setEndTime] = useState('19:00')
   const [error, setError] = useState<string | null>(null)
+  const [submissionNotice, setSubmissionNotice] = useState<string | null>(null)
 
   function validateStep() {
     if (step === 1 && (!name.trim() || !email.includes('@') || password.length < 8)) {
       setError('Completa tu nombre, un correo válido y una contraseña de al menos 8 caracteres.')
       return false
     }
-    if (step === 2 && (!bio.trim() || selectedSubjects.length === 0 || Number(rate) <= 0 || modes.length === 0)) {
-      setError('Completa la biografía, materia, tarifa y al menos una modalidad.')
+    if (step === 2 && (!bio.trim() || selectedSubjects.length === 0 || Number(rate) < 100 || Number(rate) > 1000 || modes.length === 0 || !level || !zone || Number(radius) < 1 || Number(radius) > 30)) {
+      setError('Completa la biografía, materias, nivel, tarifa entre $100 y $1,000, modalidad y zona.')
       return false
     }
-    if (step === 3 && (!titleFile || !licenseFile)) {
+    if (step === 3 && (!titleDocument || !licenseDocument)) {
       setError('Adjunta tu título y tu cédula para continuar.')
       return false
     }
@@ -141,14 +154,19 @@ export function TutorOnboarding({
     if (step < 5) setStep((value) => value + 1)
   }
 
-  function handleFile(file: File | undefined, setter: (name: string) => void) {
+  function handleFile(
+    file: File | undefined,
+    setName: (name: string) => void,
+    setDocument: (document: File) => void,
+  ) {
     if (!file) return
     const allowed = ['application/pdf', 'image/jpeg', 'image/png']
     if (!allowed.includes(file.type) || file.size > 10 * 1024 * 1024) {
       setError('Usa un archivo PDF, JPG o PNG de máximo 10 MB.')
       return
     }
-    setter(file.name)
+    setName(file.name)
+    setDocument(file)
     setError(null)
   }
 
@@ -160,13 +178,34 @@ export function TutorOnboarding({
     }
     setIsSubmitting(true)
     try {
-      const result = await onCreateAccount({ fullName: name, email, password })
+      if (!titleDocument || !licenseDocument) {
+        setError('Adjunta tu título y tu cédula antes de crear la cuenta.')
+        return
+      }
+      const result = await onCreateAccount({
+        fullName: name.trim(),
+        email,
+        password,
+        biography: bio.trim(),
+        subjects: selectedSubjects,
+        educationLevel: level,
+        hourlyRateMxn: Number(rate),
+        classModes: modes,
+        serviceZone: zone,
+        travelRadiusKm: Number(radius),
+        titleDocument,
+        licenseDocument,
+      })
       if (!result.ok) {
         setError(result.message)
       } else if (result.emailConfirmationRequired) {
         setConfirmationRequired(true)
+        if (result.credentialsPendingConfirmation) {
+          setSubmissionNotice('Confirma tu correo e inicia sesión para cargar tus documentos privados desde Más → Credenciales.')
+        }
         setSubmitted(true)
       } else {
+        if (result.warning) setSubmissionNotice(result.warning)
         setSubmitted(true)
       }
     } catch (submitError) {
@@ -211,9 +250,14 @@ export function TutorOnboarding({
           <div className="mt-4 rounded-card border border-info bg-info-bg p-3.5 text-[14px] text-info">
             <p className="flex items-start gap-2 font-semibold">
               <ShieldCheck size={18} className="mt-0.5 shrink-0" aria-hidden />
-              Te avisaremos por correo cuando termine la revisión. Mientras tanto puedes conocer tu panel.
+              Los datos del perfil se guardan en tu cuenta. La disponibilidad se conectará en una siguiente etapa.
             </p>
           </div>
+          {submissionNotice && (
+            <p role="status" className="mt-3 rounded-card border border-warn bg-warn-bg p-3.5 text-[14px] font-semibold text-warn">
+              {submissionNotice}
+            </p>
+          )}
         </div>
         <div className="border-t border-g200 bg-white p-4">
           <Button full onClick={confirmationRequired ? onBack : onComplete}>
@@ -326,7 +370,7 @@ export function TutorOnboarding({
                 <div>
                   <p className="mb-2 text-[12px] font-semibold text-g700">Modalidad</p>
                   <div className="grid grid-cols-2 gap-2">
-                    {['Presencial', 'En línea'].map((mode) => {
+                    {(['Presencial', 'En línea'] as TutorClassMode[]).map((mode) => {
                       const active = modes.includes(mode)
                       return (
                         <button key={mode} type="button" aria-pressed={active} onClick={() => setModes((prev) => active ? prev.filter((item) => item !== mode) : [...prev, mode])} className={cx('flex min-h-12 items-center justify-center gap-2 rounded-btn border-2 font-semibold', active ? 'border-ink bg-ink text-white' : 'border-g300 bg-white')}>
@@ -363,21 +407,21 @@ export function TutorOnboarding({
                 <p className="text-[13px] font-semibold">Aceptamos PDF, JPG o PNG de máximo 10 MB por archivo.</p>
               </div>
               {[
-                ['Título profesional', titleFile, setTitleFile, 'title-upload'],
-                ['Cédula profesional', licenseFile, setLicenseFile, 'license-upload'],
-              ].map(([label, filename, setter, id]) => (
+                { label: 'Título profesional', filename: titleFile, setName: setTitleFile, setFile: setTitleDocument, id: 'title-upload' },
+                { label: 'Cédula profesional', filename: licenseFile, setName: setLicenseFile, setFile: setLicenseDocument, id: 'license-upload' },
+              ].map(({ label, filename, setName, setFile, id }) => (
                 <section key={id as string} className="rounded-card border border-g200 bg-white p-4">
                   <div className="flex items-center gap-3">
                     <span className="grid size-11 shrink-0 place-items-center rounded-full bg-g100"><GraduationCap size={21} aria-hidden /></span>
                     <div className="min-w-0 flex-1">
-                      <h3 className="font-bold">{label as string}</h3>
-                      <p className="truncate text-[12px] text-g600">{filename as string || 'Sin archivo'}</p>
+                      <h3 className="font-bold">{label}</h3>
+                      <p className="truncate text-[12px] text-g600">{filename || 'Sin archivo'}</p>
                     </div>
                     {filename && <CheckCircle2 size={20} className="shrink-0 text-ok" aria-label="Archivo adjunto" />}
                   </div>
-                  <label htmlFor={id as string} className="mt-3 inline-flex min-h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-btn border-2 border-ink font-semibold">
+                  <label htmlFor={id} className="mt-3 inline-flex min-h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-btn border-2 border-ink font-semibold">
                     <Upload size={17} aria-hidden /> {filename ? 'Reemplazar archivo' : 'Adjuntar archivo'}
-                    <input id={id as string} type="file" accept=".pdf,.jpg,.jpeg,.png" className="sr-only" onChange={(e) => handleFile(e.target.files?.[0], setter as (name: string) => void)} />
+                    <input id={id} type="file" accept=".pdf,.jpg,.jpeg,.png" className="sr-only" onChange={(e) => handleFile(e.target.files?.[0], setName, setFile)} />
                   </label>
                 </section>
               ))}
@@ -448,12 +492,12 @@ export function TutorOnboarding({
                   <div><dt className="text-[12px] font-semibold text-g600">Materias y nivel</dt><dd className="font-bold">{selectedSubjects.join(', ')} · {level}</dd></div>
                   <div><dt className="text-[12px] font-semibold text-g600">Tarifa</dt><dd className="font-bold">{formatMoney(Number(rate))}/h</dd></div>
                   <div><dt className="text-[12px] font-semibold text-g600">Modalidad y zona</dt><dd className="font-bold">{modes.join(' y ')} · {zone}, {radius} km</dd></div>
-                  <div><dt className="text-[12px] font-semibold text-g600">Credenciales</dt><dd className="flex items-center gap-1.5 font-bold text-ok"><FileCheck2 size={16} aria-hidden /> Título y cédula adjuntos</dd></div>
+                  <div><dt className="text-[12px] font-semibold text-g600">Credenciales</dt><dd className="flex items-center gap-1.5 font-bold text-g700"><FileCheck2 size={16} aria-hidden /> {titleFile} · {licenseFile}</dd></div>
                   <div><dt className="text-[12px] font-semibold text-g600">Disponibilidad</dt><dd className="font-bold">{availableDays.join(', ')} · {formatTimeChip(startTime)} a {formatTimeChip(endTime)}</dd></div>
                 </dl>
               </section>
               <div className="rounded-card border border-g200 bg-white p-4 text-[13px] text-g700">
-                En esta primera integración solo se crea tu cuenta. Los datos del perfil y los documentos todavía no se envían ni guardan.
+                El perfil profesional se guardará en Supabase. Los horarios seleccionados aún no se persisten.
               </div>
             </>
           )}
@@ -481,16 +525,33 @@ export function TutorOnboarding({
 
 export function TutorHomeScreen({
   sessions,
+  fullName,
   onOpenSession,
   onStartSession,
   onTabSelect,
 }: {
   sessions: ClassSession[]
+  fullName: string
   onOpenSession: (id: string) => void
   onStartSession: (id: string) => void
   onTabSelect: (idx: number) => void
 }) {
-  const today = sessions.filter((item) => item.day === 23 && item.status !== 'Cancelada')
+  const now = new Date()
+  const meridaDate = new Date(now.toLocaleString('en-US', { timeZone: 'America/Merida' }))
+  const todayMonth = new Intl.DateTimeFormat('es-MX', {
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'America/Merida',
+  }).format(now).replace(' de ', ' ').toLowerCase()
+  const today = sessions.filter((item) =>
+    item.day === meridaDate.getDate() &&
+    (!item.monthLabel || item.monthLabel.toLowerCase() === todayMonth) &&
+    item.status !== 'Cancelada',
+  )
+  const todayLabel = new Intl.DateTimeFormat('es-MX', {
+    dateStyle: 'full',
+    timeZone: 'America/Merida',
+  }).format(now)
   const newReservations = sessions.filter((item) => item.isNewForTutor)
   const available = sessions
     .filter((item) => item.paymentStatus === 'Liberado')
@@ -513,8 +574,8 @@ export function TutorHomeScreen({
         >
         <div className="flex flex-col gap-4">
           <section>
-            <p className="text-[13px] font-semibold text-g600">Lunes 23 de noviembre de 2026 · Mérida (UTC-6)</p>
-            <h1 className="mt-1 text-[24px] font-bold">Hola, Carlos</h1>
+            <p className="text-[13px] font-semibold text-g600">{todayLabel} · Mérida (UTC-6)</p>
+            <h1 className="mt-1 text-[24px] font-bold">Hola, {fullName}</h1>
             <p className="text-[14px] text-g600">Tienes {today.length} clases programadas para hoy.</p>
           </section>
 
@@ -607,7 +668,6 @@ export function TutorFinanceScreen({ sessions, onTabSelect }: { sessions: ClassS
   const [withdrawSheet, setWithdrawSheet] = useState(false)
   const [withdrawConfirmed, setWithdrawConfirmed] = useState(false)
   const [withdrawAmount, setWithdrawAmount] = useState(String(Math.max(200, Math.floor(availableTotal))))
-  const [hasBankAccount, setHasBankAccount] = useState(true)
   const [paymentFilter, setPaymentFilter] = useState<'all' | ClassSession['paymentStatus']>('all')
   const [monthFilter, setMonthFilter] = useState('Noviembre 2026')
   const filteredTransactions = sessions.filter((item) => {
@@ -652,28 +712,16 @@ export function TutorFinanceScreen({ sessions, onTabSelect }: { sessions: ClassS
             <div><p className="text-[12px] text-g300">Disponible</p><p className="font-bold">{formatMoney(availableTotal)}</p></div>
             <div><p className="text-[12px] text-g300">En retención</p><p className="font-bold">{formatMoney(retainedTotal)}</p></div>
           </div>
-          <Button full variant="secondary" className="mt-4" disabled={!hasBankAccount || availableTotal < 200} onClick={() => {
-            setWithdrawConfirmed(false)
-            setWithdrawSheet(true)
-          }}>
-            Retirar fondos
+          <Button full variant="secondary" className="mt-4" disabled>
+            Retiros no disponibles
           </Button>
         </section>
 
-        {hasBankAccount ? (
-          <section className="mt-3 flex items-center gap-3 rounded-card border border-g200 bg-white p-4">
-            <span className="grid size-10 shrink-0 place-items-center rounded-full bg-g100"><Building2 size={20} aria-hidden /></span>
-            <div className="min-w-0 flex-1"><p className="font-bold">Banco Santander •••• 4821</p><p className="text-[12px] text-g600">Cuenta para retiros · 1 a 2 días hábiles</p></div>
-            <button type="button" onClick={() => setHasBankAccount(false)} className="min-h-11 px-2 text-[12px] font-semibold underline">Quitar</button>
-          </section>
-        ) : (
-          <section className="mt-3 flex flex-col items-center rounded-card border border-dashed border-g300 bg-white p-5 text-center">
-            <span className="grid size-12 place-items-center rounded-full bg-g100"><Building2 size={22} aria-hidden /></span>
-            <h2 className="mt-2 font-bold">Sin cuenta bancaria</h2>
-            <p className="mt-1 text-[12px] text-g600">Agrega una cuenta para retirar fondos disponibles.</p>
-            <Button className="mt-3" onClick={() => setHasBankAccount(true)}>Agregar cuenta bancaria</Button>
-          </section>
-        )}
+        <section className="mt-3 flex flex-col items-center rounded-card border border-dashed border-g300 bg-white p-5 text-center">
+          <span className="grid size-12 place-items-center rounded-full bg-g100"><Building2 size={22} aria-hidden /></span>
+          <h2 className="mt-2 font-bold">Sin cuenta bancaria</h2>
+          <p className="mt-1 text-[12px] text-g600">La vinculación de cuentas para retiros aún no está conectada.</p>
+        </section>
 
         <section className="mt-3 rounded-card border border-info bg-info-bg p-4 text-info">
           <p className="flex items-center gap-2 font-bold"><Clock size={18} aria-hidden /> Fondos en retención 48 h</p>
@@ -788,30 +836,139 @@ type MoreSection = 'menu' | 'profile' | 'preview' | 'credentials' | 'students' |
 
 export function TutorMoreScreen({
   sessions,
+  userId,
+  fullName,
   onMessageStudent,
   onLogout,
   onTabSelect,
 }: {
   sessions: ClassSession[]
+  userId: string
+  fullName: string
   onMessageStudent: (session: ClassSession) => void
   onLogout: () => void
   onTabSelect: (idx: number) => void
 }) {
   const [section, setSection] = useState<MoreSection>('menu')
-  const [profileBio, setProfileBio] = useState('Ingeniero civil con 6 años de experiencia dando clases de Matemáticas y Física. Explico paso a paso con ejemplos prácticos y adapto el ritmo a cada Alumno.')
-  const [profileSubjects, setProfileSubjects] = useState<string[]>(['Matemáticas', 'Física'])
-  const [profileLevel, setProfileLevel] = useState('Universidad')
-  const [profileRate, setProfileRate] = useState(250)
-  const [profileModes, setProfileModes] = useState<string[]>(['Presencial', 'En línea'])
-  const [profileZone, setProfileZone] = useState('Zona norte')
-  const [profileRadius, setProfileRadius] = useState(8)
-  const [packageDiscounts, setPackageDiscounts] = useState({ 4: 3, 8: 5, 12: 10 })
+  const [profileBio, setProfileBio] = useState('')
+  const [profileSubjects, setProfileSubjects] = useState<string[]>([])
+  const [profileLevel, setProfileLevel] = useState('')
+  const [profileRate, setProfileRate] = useState(0)
+  const [profileModes, setProfileModes] = useState<TutorClassMode[]>([])
+  const [profileZone, setProfileZone] = useState('')
+  const [profileRadius, setProfileRadius] = useState(0)
+  const [profilePhoto, setProfilePhoto] = useState<string | null>(null)
+  const [verificationStatus, setVerificationStatus] = useState<TutorProfileRecord['verificationStatus']>('pending')
+  const [verificationRejectionReason, setVerificationRejectionReason] = useState<string | null>(null)
+  const [credentialPaths, setCredentialPaths] = useState<Record<TutorCredentialKind, string | null>>({ title: null, license: null })
+  const [credentialFiles, setCredentialFiles] = useState<Record<TutorCredentialKind, File | null>>({ title: null, license: null })
+  const [profileLoading, setProfileLoading] = useState(true)
+  const [profileError, setProfileError] = useState<string | null>(null)
+  const [profileSaving, setProfileSaving] = useState(false)
+  const [photoSaving, setPhotoSaving] = useState(false)
+  const [photoError, setPhotoError] = useState<string | null>(null)
+  const [photoMessage, setPhotoMessage] = useState<string | null>(null)
+  const [packageDiscounts, setPackageDiscounts] = useState({ 4: 0, 8: 0, 12: 0 })
   const [profileSaved, setProfileSaved] = useState(false)
-  const [newDocuments, setNewDocuments] = useState<string[]>([])
-  const [credentialsSent, setCredentialsSent] = useState(false)
+  const [credentialError, setCredentialError] = useState<string | null>(null)
+  const [credentialMessage, setCredentialMessage] = useState<string | null>(null)
+  const [credentialSaving, setCredentialSaving] = useState(false)
   const [subscriptionState, setSubscriptionState] = useState<'standard' | 'active' | 'paused'>('standard')
   const [subscriptionDialog, setSubscriptionDialog] = useState<'checkout' | 'pause' | 'cancel' | null>(null)
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null)
+  useEffect(() => {
+    let active = true
+    setProfileLoading(true)
+    void getTutorProfile(userId)
+      .then((profile) => {
+        if (!active) return
+        setProfileBio(profile.biography ?? '')
+        setProfileSubjects(profile.subjects)
+        setProfileLevel(profile.educationLevel ?? '')
+        setProfileRate(profile.hourlyRateMxn ?? 0)
+        setProfileModes(profile.classModes)
+        setProfileZone(profile.serviceZone ?? '')
+        setProfileRadius(profile.travelRadiusKm ?? 0)
+        setProfilePhoto(profile.photoUrl)
+        setVerificationStatus(profile.verificationStatus)
+        setVerificationRejectionReason(profile.verificationRejectionReason)
+        setCredentialPaths({ title: profile.titleDocumentPath, license: profile.licenseDocumentPath })
+        setProfileError(null)
+      })
+      .catch((error: unknown) => {
+        if (active) setProfileError(error instanceof Error ? error.message : 'No se pudo cargar el perfil.')
+      })
+      .finally(() => {
+        if (active) setProfileLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [userId])
+
+  async function saveProfilePhoto(file: File) {
+    setPhotoSaving(true)
+    setPhotoError(null)
+    setPhotoMessage(null)
+    try {
+      const result = await uploadTutorProfilePhoto(userId, file)
+      setProfilePhoto(result.photoUrl)
+      if (result.warning) setPhotoError(result.warning)
+      else setPhotoMessage('Foto de perfil actualizada.')
+    } catch (error) {
+      setPhotoError(error instanceof Error ? error.message : 'No se pudo actualizar la foto de perfil.')
+    } finally {
+      setPhotoSaving(false)
+    }
+  }
+
+  async function saveProfile() {
+    setProfileSaving(true)
+    setProfileError(null)
+    try {
+      if (!profileBio.trim() || !profileLevel || !profileZone || profileRate < 100 || profileRate > 1000 || profileRadius < 1 || profileRadius > 30 || profileSubjects.length === 0 || profileModes.length === 0) {
+        throw new Error('Completa todos los campos del perfil con valores válidos.')
+      }
+      await updateTutorProfile(userId, {
+        biography: profileBio.trim(),
+        subjects: profileSubjects,
+        educationLevel: profileLevel,
+        hourlyRateMxn: profileRate,
+        classModes: profileModes,
+        serviceZone: profileZone,
+        travelRadiusKm: profileRadius,
+      })
+      setProfileSaved(true)
+      window.setTimeout(() => setProfileSaved(false), 1800)
+    } catch (error) {
+      setProfileError(error instanceof Error ? error.message : 'No se pudo guardar el perfil.')
+    } finally {
+      setProfileSaving(false)
+    }
+  }
+
+  async function saveCredentials() {
+    setCredentialSaving(true)
+    setCredentialError(null)
+    setCredentialMessage(null)
+    try {
+      const selected = (Object.entries(credentialFiles) as [TutorCredentialKind, File | null][])
+        .filter((entry): entry is [TutorCredentialKind, File] => entry[1] !== null)
+      if (selected.length === 0) throw new Error('Selecciona al menos un documento.')
+      for (const [kind, file] of selected) {
+        const path = await uploadTutorCredential(userId, kind, file)
+        setCredentialPaths((previous) => ({ ...previous, [kind]: path }))
+        setCredentialFiles((previous) => ({ ...previous, [kind]: null }))
+        setVerificationStatus('pending')
+        setVerificationRejectionReason(null)
+      }
+      setCredentialMessage('Documento cargado de forma privada. Está pendiente de revisión.')
+    } catch (error) {
+      setCredentialError(error instanceof Error ? error.message : 'No se pudieron cargar los documentos.')
+    } finally {
+      setCredentialSaving(false)
+    }
+  }
   const students = useMemo(() => {
     const map = new Map<string, { id: string; name: string; count: number; subject: string; lastDay: number }>()
     sessions.forEach((item) => {
@@ -829,6 +986,13 @@ export function TutorMoreScreen({
   const selectedStudentSessions = sessions
     .filter((item) => item.studentId === selectedStudentId)
     .sort((a, b) => b.day - a.day || b.time.localeCompare(a.time))
+  const verificationLabels: Record<TutorProfileRecord['verificationStatus'], ChipKey> = {
+    pending: 'Pendiente',
+    in_review: 'En revisión',
+    verified: 'Verificado',
+    rejected: 'Rechazado',
+  }
+  const verificationLabel = verificationLabels[verificationStatus]
 
   if (section !== 'menu') {
     const title = {
@@ -846,6 +1010,9 @@ export function TutorMoreScreen({
         <div className="flex-1 overflow-y-auto bg-g50 p-4">
           {section === 'profile' && (
             <div className="flex flex-col gap-3.5">
+              {profileError && <p role="alert" className="rounded-btn border border-err bg-err-bg p-3 font-semibold text-err">{profileError}</p>}
+              {photoError && <p role="alert" className="rounded-btn border border-err bg-err-bg p-3 font-semibold text-err">{photoError}</p>}
+              {photoMessage && <p role="status" className="rounded-btn border-l-4 border-ok bg-ok-bg p-3 font-semibold text-ok">{photoMessage}</p>}
               {profileSaved && (
                 <p role="status" className="flex items-center gap-2 rounded-btn border-l-4 border-ok bg-ok-bg p-3 font-semibold text-ok">
                   <CheckCircle2 size={18} aria-hidden /> Perfil guardado
@@ -853,16 +1020,25 @@ export function TutorMoreScreen({
               )}
               <section className="rounded-card border border-g200 bg-white p-4">
                 <div className="flex items-center gap-3">
-                  <span className="grid size-16 place-items-center rounded-full bg-ink text-[18px] font-bold text-white">CC</span>
+                  {profilePhoto ? (
+                    <img src={profilePhoto} alt={`Foto de ${fullName}`} className="size-16 shrink-0 rounded-full bg-g200 object-cover" />
+                  ) : (
+                    <span className="grid size-16 shrink-0 place-items-center rounded-full bg-ink text-[18px] font-bold text-white">{fullName.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase()}</span>
+                  )}
                   <div className="min-w-0 flex-1">
-                    <h2 className="text-[19px] font-bold">Carlos Chan</h2>
-                    <p className="text-g600">Tutor · USR-0002</p>
+                    <h2 className="text-[19px] font-bold">{fullName}</h2>
+                    <p className="truncate text-g600">Tutor · {userId}</p>
                   </div>
-                  <StatusChip status="En revisión" />
+                  <StatusChip status={verificationLabel} />
                 </div>
                 <label className="mt-3 inline-flex min-h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-btn border-2 border-ink font-semibold">
-                  <Upload size={17} aria-hidden /> Cambiar foto
-                  <input type="file" accept="image/jpeg,image/png" className="sr-only" />
+                  <Upload size={17} aria-hidden /> {photoSaving ? 'Actualizando foto…' : 'Cambiar foto'}
+                  <input type="file" accept="image/jpeg,image/png,image/webp" className="sr-only" disabled={photoSaving} onChange={(event) => {
+                    const input = event.currentTarget
+                    const file = input.files?.[0]
+                    if (file) void saveProfilePhoto(file)
+                    input.value = ''
+                  }} />
                 </label>
               </section>
 
@@ -888,6 +1064,7 @@ export function TutorMoreScreen({
                 <div className="flex flex-col gap-1">
                   <FieldLabel htmlFor="profile-level">Nivel</FieldLabel>
                   <select id="profile-level" value={profileLevel} onChange={(e) => setProfileLevel(e.target.value)} className="min-h-12 rounded-btn border border-g500 bg-white px-3">
+                    <option value="">Selecciona un nivel</option>
                     {LEVELS.map((item) => <option key={item}>{item}</option>)}
                   </select>
                 </div>
@@ -901,7 +1078,7 @@ export function TutorMoreScreen({
                 <div>
                   <p className="mb-2 text-[12px] font-semibold text-g700">Modalidad</p>
                   <div className="grid grid-cols-2 gap-2">
-                    {['Presencial', 'En línea'].map((mode) => {
+                    {(['Presencial', 'En línea'] as TutorClassMode[]).map((mode) => {
                       const active = profileModes.includes(mode)
                       return (
                         <button key={mode} type="button" aria-pressed={active} onClick={() => setProfileModes((prev) => active ? prev.filter((item) => item !== mode) : [...prev, mode])} className={cx('flex min-h-11 items-center justify-center gap-1.5 rounded-btn border font-semibold', active ? 'border-ink bg-ink text-white' : 'border-g300 bg-white')}>
@@ -915,6 +1092,7 @@ export function TutorMoreScreen({
                   <label className="flex flex-col gap-1 text-[12px] font-semibold text-g700">
                     Zona
                     <select value={profileZone} onChange={(e) => setProfileZone(e.target.value)} className="min-h-12 rounded-btn border border-g500 bg-white px-2 text-[14px] text-ink">
+                      <option value="">Selecciona una zona</option>
                       {MERIDA_ZONES.map((item) => <option key={item}>{item}</option>)}
                     </select>
                   </label>
@@ -945,7 +1123,7 @@ export function TutorMoreScreen({
               </section>
 
               <Button full variant="secondary" onClick={() => setSection('preview')}>Ver cómo me ven los alumnos</Button>
-              <Button full disabled={profileRate < 100 || profileRate > 1000 || profileSubjects.length === 0 || profileModes.length === 0} onClick={() => { setProfileSaved(true); window.setTimeout(() => setProfileSaved(false), 1800) }}>Guardar perfil</Button>
+              <Button full disabled={profileLoading || profileSaving} onClick={() => void saveProfile()}>{profileSaving ? 'Guardando…' : 'Guardar perfil'}</Button>
             </div>
           )}
           {section === 'preview' && (
@@ -953,11 +1131,15 @@ export function TutorMoreScreen({
               <div role="note" className="rounded-btn border border-info bg-info-bg p-3 text-[13px] font-semibold text-info">Vista previa pública para Alumnos</div>
               <section className="rounded-card border border-g200 bg-white p-4 shadow-sm">
                 <div className="flex items-center gap-3">
-                  <span className="grid size-16 place-items-center rounded-full bg-ink text-[18px] font-bold text-white">CC</span>
+                  {profilePhoto ? (
+                    <img src={profilePhoto} alt={`Foto de ${fullName}`} className="size-16 shrink-0 rounded-full bg-g200 object-cover" />
+                  ) : (
+                    <span className="grid size-16 shrink-0 place-items-center rounded-full bg-ink text-[18px] font-bold text-white">{fullName.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase()}</span>
+                  )}
                   <div className="flex-1">
-                    <div className="flex items-center gap-1.5"><h2 className="text-[19px] font-bold">Carlos Chan</h2><BadgeCheck size={18} className="text-ok" aria-label="Verificado" /></div>
+                    <div className="flex items-center gap-1.5"><h2 className="text-[19px] font-bold">{fullName}</h2>{verificationStatus === 'verified' && <BadgeCheck size={18} className="text-ok" aria-label="Verificado" />}</div>
                     <p className="text-g600">{profileSubjects.join(' y ')}</p>
-                    <p className="flex items-center gap-1 font-semibold"><Star size={15} className="fill-ink" aria-hidden /> 4.8 (32 reseñas)</p>
+                    <p className="flex items-center gap-1 font-semibold"><Star size={15} aria-hidden /> Aún no tienes reseñas</p>
                   </div>
                 </div>
                 <p className="mt-3 border-t border-g200 pt-3 text-[14px] text-g700">{profileBio}</p>
@@ -973,60 +1155,54 @@ export function TutorMoreScreen({
             <div className="flex flex-col gap-3">
               <section className="rounded-card border border-info bg-info-bg p-4 text-info">
                 <h2 className="flex items-center gap-2 font-bold"><ShieldCheck size={18} aria-hidden /> Verificación profesional</h2>
-                <p className="mt-1 text-[13px]">Revisamos tus documentos para generar confianza y mostrar tu estado a los Alumnos.</p>
+                <p className="mt-1 text-[13px]">Estado actual: {verificationLabel}. Admin actualizará el estado después de revisar tus documentos.</p>
               </section>
-
-              <label className="flex min-h-28 cursor-pointer flex-col items-center justify-center gap-2 rounded-card border-2 border-dashed border-g500 bg-white p-4 text-center">
-                <Upload size={24} aria-hidden />
-                <span className="font-bold">Cargar documentos nuevos</span>
-                <span className="text-[12px] text-g600">PDF, JPG o PNG · máximo 10 MB</span>
-                <input type="file" multiple accept=".pdf,.jpg,.jpeg,.png" className="sr-only" onChange={(e) => {
-                  const files = Array.from(e.target.files ?? [])
-                  setNewDocuments(files.filter((file) => file.size <= 10 * 1024 * 1024).map((file) => file.name))
-                  setCredentialsSent(false)
-                }} />
-              </label>
+              {verificationRejectionReason && (
+                <section className="rounded-card border border-err bg-err-bg p-4 text-err">
+                  <h2 className="font-bold">Motivo de rechazo</h2>
+                  <p className="mt-1 text-[13px]">{verificationRejectionReason}</p>
+                </section>
+              )}
 
               {[
-                { name: 'Título profesional', file: 'titulo-ingenieria.pdf', status: 'Verificado' as const, note: 'Validado el 23 de noviembre de 2026' },
-                { name: 'Cédula profesional', file: 'cedula-profesional.jpg', status: 'En revisión' as const, note: 'Recibida · respuesta en 24 a 48 h' },
-                { name: 'Certificación complementaria', file: 'certificado-fisica.png', status: 'Rechazado' as const, note: 'Motivo: la imagen está borrosa y no permite leer el folio.' },
+                { kind: 'title' as const, name: 'Título profesional' },
+                { kind: 'license' as const, name: 'Cédula profesional' },
               ].map((doc) => (
                 <section key={doc.name} className="rounded-card border border-g200 bg-white p-4">
                   <div className="flex items-start gap-3">
                     <FileText size={22} className="mt-0.5 shrink-0" aria-hidden />
                     <div className="min-w-0 flex-1">
                       <h2 className="font-bold">{doc.name}</h2>
-                      <p className="truncate text-[12px] text-g600">{doc.file}</p>
+                      <p className="truncate text-[12px] text-g600">
+                        {credentialFiles[doc.kind]?.name ?? credentialPaths[doc.kind]?.split('/').pop() ?? 'Aún no has cargado este documento'}
+                      </p>
                     </div>
-                    <StatusChip status={doc.status} />
+                    {credentialPaths[doc.kind] && <StatusChip status={verificationLabel} />}
                   </div>
-                  <p className={cx('mt-2 text-[12px]', doc.status === 'Rechazado' ? 'font-semibold text-err' : 'text-g600')}>{doc.note}</p>
-                  {doc.status === 'Rechazado' && (
-                    <label className="mt-3 inline-flex min-h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-btn border-2 border-err bg-white font-semibold text-err">
-                      <Upload size={16} aria-hidden /> Volver a subir
-                      <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="sr-only" onChange={(e) => {
-                        const file = e.target.files?.[0]
-                        if (file && file.size <= 10 * 1024 * 1024) {
-                          setNewDocuments((prev) => [...prev, file.name])
-                          setCredentialsSent(false)
-                        }
-                      }} />
-                    </label>
+                  {credentialPaths[doc.kind] && (
+                    <button type="button" className="mt-2 text-[13px] font-semibold underline" onClick={() => {
+                      const path = credentialPaths[doc.kind]
+                      if (!path) return
+                      void createTutorCredentialUrl(path)
+                        .then((url) => window.open(url, '_blank', 'noopener,noreferrer'))
+                        .catch((error: unknown) => setCredentialError(error instanceof Error ? error.message : 'No se pudo abrir el documento.'))
+                    }}>Abrir documento privado</button>
                   )}
+                  <label className="mt-3 inline-flex min-h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-btn border-2 border-ink bg-white font-semibold">
+                    <Upload size={16} aria-hidden /> {credentialPaths[doc.kind] ? 'Reemplazar documento' : 'Cargar documento'}
+                    <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="sr-only" onChange={(e) => {
+                      const file = e.target.files?.[0] ?? null
+                      setCredentialFiles((previous) => ({ ...previous, [doc.kind]: file }))
+                      setCredentialError(null)
+                      setCredentialMessage(null)
+                    }} />
+                  </label>
                 </section>
               ))}
 
-              {newDocuments.length > 0 && (
-                <section className="rounded-card border border-ok bg-ok-bg p-3.5 text-ok">
-                  <p className="font-bold">{newDocuments.length} {newDocuments.length === 1 ? 'documento nuevo' : 'documentos nuevos'}</p>
-                  {newDocuments.map((file) => <p key={file} className="mt-1 text-[12px]">{file}</p>)}
-                </section>
-              )}
-              {credentialsSent && (
-                <p role="status" className="flex items-center gap-2 rounded-btn border-l-4 border-ok bg-ok-bg p-3 font-semibold text-ok"><CheckCircle2 size={18} aria-hidden /> Documentos enviados para verificación</p>
-              )}
-              <Button full disabled={newDocuments.length === 0} onClick={() => { setCredentialsSent(true); setNewDocuments([]) }}>Enviar para verificación</Button>
+              {credentialError && <p role="alert" className="rounded-btn border border-err bg-err-bg p-3 font-semibold text-err">{credentialError}</p>}
+              {credentialMessage && <p role="status" className="rounded-btn border-l-4 border-ok bg-ok-bg p-3 font-semibold text-ok">{credentialMessage}</p>}
+              <Button full disabled={credentialSaving || !credentialFiles.title && !credentialFiles.license} onClick={() => void saveCredentials()}>{credentialSaving ? 'Cargando…' : 'Guardar documentos'}</Button>
               <p className="flex items-start gap-2 rounded-btn bg-g100 p-3 text-[12px] text-g700">
                 <ShieldCheck size={16} className="mt-0.5 shrink-0" aria-hidden />
                 Tus documentos son privados, se almacenan de forma segura y nunca se muestran completos a los Alumnos.
@@ -1170,7 +1346,7 @@ export function TutorMoreScreen({
                   <p className="mt-1 text-[14px] text-g600">$299.00 MXN al mes · renovación mensual automática.</p>
                   <div className="mt-4 flex items-center gap-3 rounded-card border-2 border-ink bg-g100 p-3">
                     <span className="grid h-9 w-12 place-items-center rounded bg-ink text-[12px] font-bold text-white">VISA</span>
-                    <div className="flex-1"><p className="font-bold">Visa •••• 4242</p><p className="text-[12px] text-g600">Carlos Chan · Vence 09/28</p></div>
+                    <div className="flex-1"><p className="font-bold">Visa •••• 4242</p><p className="text-[12px] text-g600">{fullName} · Vence 09/28</p></div>
                     <CheckCircle2 size={20} className="text-ok" aria-hidden />
                   </div>
                   <Button full className="mt-4" onClick={() => { setSubscriptionState('active'); setSubscriptionDialog(null) }}>Pagar $299.00 MXN y suscribirme</Button>
@@ -1202,9 +1378,8 @@ export function TutorMoreScreen({
 
   const options = [
     ['profile', 'Perfil', 'Tu información profesional y materias', User],
-    ['credentials', 'Credenciales', 'Título y cédula en revisión', GraduationCap],
+    ['credentials', 'Credenciales', 'Consulta el estado de tus documentos', GraduationCap],
     ['students', 'Mis alumnos', `${students.length} Alumnos con clases`, Users],
-    ['subscription', 'Suscripción', 'Plan y comisión de TutorClick', CreditCard],
     ['help', 'Ayuda', 'Pagos, calendario y soporte', HelpCircle],
   ] as const
 
@@ -1213,9 +1388,13 @@ export function TutorMoreScreen({
       <TopBar title="Más" />
       <div className="flex-1 overflow-y-auto bg-g50 p-4">
         <section className="mb-3 flex items-center gap-3 rounded-card border border-g200 bg-white p-4">
-          <span className="grid size-14 place-items-center rounded-full bg-ink text-[16px] font-bold text-white">CC</span>
-          <div className="flex-1"><h1 className="text-[18px] font-bold">Carlos Chan</h1><p className="text-[12px] text-g600">Tutor · USR-0002</p></div>
-          <StatusChip status="En revisión" />
+          {profilePhoto ? (
+            <img src={profilePhoto} alt={`Foto de ${fullName}`} className="size-14 shrink-0 rounded-full bg-g200 object-cover" />
+          ) : (
+            <span className="grid size-14 shrink-0 place-items-center rounded-full bg-ink text-[16px] font-bold text-white">{fullName.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase()}</span>
+          )}
+          <div className="flex-1"><h1 className="text-[18px] font-bold">{fullName}</h1><p className="truncate text-[12px] text-g600">Tutor · {userId}</p></div>
+          <StatusChip status={verificationLabel} />
         </section>
         <div className="flex flex-col gap-2">
           {options.map(([key, label, detail, Icon]) => (

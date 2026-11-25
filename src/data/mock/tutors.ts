@@ -285,12 +285,9 @@ export const TUTOR_CATALOG: TutorData[] = [
   },
 ]
 
-export const SEARCH_TUTORS: SearchTutorSummary[] = [
-  { id: 'USR-0002', name: 'Carlos Chan', subjects: ['Matemáticas', 'Física'], rate: 250, rating: 4.8, reviews: 32, verified: true, modes: ['Presencial', 'En línea'], km: 2.3, photo: photo240('1583123810408-23e7b5d1af9f'), pin: [34, 38] },
-  { id: 'USR-0003', name: 'Luis Pérez', subjects: ['Química'], rate: 200, rating: 4.6, reviews: 18, verified: true, modes: ['Presencial'], km: 4.1, photo: photo240('1757744705465-ea08b0ddc38a'), pin: [68, 26] },
-  { id: 'USR-0004', name: 'Valeria Ortiz', subjects: ['Programación'], rate: 300, rating: 4.9, reviews: 41, verified: true, modes: ['Presencial', 'En línea'], km: 6.8, photo: photo240('1630939687530-241d630735df'), pin: [56, 66] },
-  { id: 'USR-0005', name: 'Jorge Mora', subjects: ['Inglés'], rate: 220, rating: 4.5, reviews: 9, verified: false, modes: ['En línea'], km: null, photo: photo240('1625241152315-4a698f74ceb7') },
-]
+export const PUBLISHED_TUTORS: TutorData[] = []
+
+export const SEARCH_TUTORS: SearchTutorSummary[] = []
 
 export const CARLOS: ProfileViewData = {
   id: 'USR-0002', name: 'Carlos Chan', first: 'Carlos', photo: photo320('1583123810408-23e7b5d1af9f'), verified: true, rating: 4.8, reviewCount: 32,

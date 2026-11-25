@@ -1,6 +1,5 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
-  Activity,
   AlertTriangle,
   BadgeCheck,
   BarChart3,
@@ -18,7 +17,6 @@ import {
   FileCheck2,
   FileText,
   Gavel,
-  History,
   LayoutDashboard,
   Lock,
   Menu,
@@ -37,6 +35,7 @@ import {
   XCircle,
 } from 'lucide-react'
 import { Button, StatusChip, Toast } from '../../components/ui/ds'
+import type { ChipKey } from '../../components/ui/ds'
 import { AuthFeedbackAlert, DemoCredentialsBlock } from '../alumno/auth'
 import { ListState } from '../../components/ui/list-state'
 import {
@@ -44,7 +43,6 @@ import {
   INITIAL_REPORTED_PROFILES,
   INITIAL_REPORTED_REVIEWS,
   INITIAL_USERS,
-  INITIAL_VERIFICATIONS,
   formatMoney,
 } from '../../data/mock'
 import type {
@@ -52,8 +50,14 @@ import type {
   AdminUserRecord as AdminUser,
   ClassSession,
   PaymentStatus,
-  VerificationRecord,
 } from '../../types'
+import {
+  createTutorCredentialUrl,
+  listTutorCredentialReviews,
+  reviewTutorCredentials,
+  type TutorCredentialReviewRecord,
+  type TutorCredentialReviewStatus,
+} from '../../services/perfiles'
 import {
   loginWithPassword,
   logout,
@@ -304,43 +308,43 @@ function KpiCard({ label, value, detail, icon: Icon, tone = 'neutral' }: { label
 }
 
 function AdminHome({ onNavigate }: { onNavigate: (section: AdminSection) => void }) {
-  const graphHeights = ['h-12', 'h-16', 'h-10', 'h-20', 'h-24', 'h-16', 'h-28', 'h-20', 'h-32', 'h-24', 'h-36', 'h-28', 'h-40', 'h-32', 'h-44']
+  const today = new Intl.DateTimeFormat('es-MX', {
+    dateStyle: 'full',
+    timeZone: 'America/Merida',
+  }).format(new Date())
   return (
     <div className="flex flex-col gap-5">
       <div>
         <h1 className="text-[28px] font-bold">Inicio</h1>
-        <p className="text-g600">Lunes 23 de noviembre de 2026 · Mérida (UTC-6)</p>
+        <p className="text-g600">{today} · Mérida</p>
       </div>
       <section className="grid grid-cols-5 gap-3">
-        <KpiCard label="Usuarios activos" value="2,418" detail="+8.4% vs. periodo anterior" icon={Users} />
-        <KpiCard label="Clases hoy" value="186" detail="142 en línea · 44 presenciales" icon={CalendarIcon} />
-        <KpiCard label="Ingresos MXN" value="$46,500" detail="Cobrado hoy" icon={CircleDollarSign} />
-        <KpiCard label="Comisiones" value="$6,975" detail="15% promedio" icon={CreditCard} />
-        <KpiCard label="Disputas abiertas" value="7" detail="2 requieren respuesta hoy" icon={AlertTriangle} tone="err" />
+        <KpiCard label="Usuarios activos" value="0" detail="Sin datos disponibles" icon={Users} />
+        <KpiCard label="Clases hoy" value="0" detail="Sin datos disponibles" icon={CalendarIcon} />
+        <KpiCard label="Ingresos MXN" value="$0.00" detail="Sin operaciones registradas" icon={CircleDollarSign} />
+        <KpiCard label="Comisiones" value="$0.00" detail="Sin operaciones registradas" icon={CreditCard} />
+        <KpiCard label="Disputas abiertas" value="0" detail="Sin disputas registradas" icon={AlertTriangle} />
       </section>
       <div className="grid grid-cols-[1.7fr_1fr] gap-4">
         <section className="rounded-card border border-g200 bg-white p-5 shadow-sm">
           <div className="flex items-center justify-between">
             <div><h2 className="text-[18px] font-bold">Ingresos de los últimos 30 días</h2><p className="text-[12px] text-g600">Cobros procesados en MXN</p></div>
-            <p className="text-[22px] font-bold">$1,284,750.00 MXN</p>
+            <p className="text-[22px] font-bold">$0.00 MXN</p>
           </div>
-          <div className="mt-5 flex h-52 items-end gap-2 border-b border-l border-g300 px-3">
-            {graphHeights.map((height, index) => (
-              <div key={index} className={cx('flex-1 rounded-t bg-ink', height)} title={`Día ${index * 2 + 1}`} />
-            ))}
+          <div className="mt-5 grid h-52 place-items-center border border-dashed border-g300 text-g600">
+            Aún no hay datos para mostrar.
           </div>
-          <div className="mt-2 flex justify-between text-[12px] text-g600"><span>25 oct</span><span>8 nov</span><span>23 nov</span></div>
         </section>
         <section className="rounded-card border border-g200 bg-white p-5 shadow-sm">
-          <div className="flex items-center justify-between"><h2 className="text-[18px] font-bold">Pendientes</h2><span className="rounded-full bg-err-bg px-3 py-1 font-bold text-err">16</span></div>
+          <div className="flex items-center justify-between"><h2 className="text-[18px] font-bold">Pendientes</h2><span className="rounded-full bg-g100 px-3 py-1 font-bold text-g700">0</span></div>
           <div className="mt-3 flex flex-col gap-2">
             {[
-              ['Credenciales', '4 expedientes · 1 supera 48 h', 'verification', true],
-              ['Reportes', '5 reportes de conducta', 'moderation', false],
-              ['Disputas', '7 pagos retenidos', 'payments', false],
-            ].map(([title, detail, section, overdue]) => (
-              <button key={title as string} type="button" onClick={() => onNavigate(section as AdminSection)} className={cx('flex min-h-16 items-center justify-between rounded-btn border p-3 text-left', overdue ? 'border-err bg-err-bg' : 'border-g200 bg-g50')}>
-                <span><span className="block font-bold">{title as string}</span><span className={cx('text-[12px]', overdue ? 'text-err' : 'text-g600')}>{detail as string}</span></span>
+              ['Credenciales', '0 expedientes', 'verification'],
+              ['Reportes', '0 reportes', 'moderation'],
+              ['Disputas', '0 pagos retenidos', 'payments'],
+            ].map(([title, detail, section]) => (
+              <button key={title as string} type="button" onClick={() => onNavigate(section as AdminSection)} className="flex min-h-16 items-center justify-between rounded-btn border border-g200 bg-g50 p-3 text-left">
+                <span><span className="block font-bold">{title as string}</span><span className="text-[12px] text-g600">{detail as string}</span></span>
                 <ChevronRight size={18} aria-hidden />
               </button>
             ))}
@@ -349,20 +353,7 @@ function AdminHome({ onNavigate }: { onNavigate: (section: AdminSection) => void
       </div>
       <section className="rounded-card border border-g200 bg-white p-5 shadow-sm">
         <h2 className="text-[18px] font-bold">Actividad reciente</h2>
-        <div className="mt-3 divide-y divide-g200">
-          {[
-            ['3:48 PM', 'Pago PAG-7001 retenido', '$275.00 MXN · RES-1001'],
-            ['3:32 PM', 'Valeria Ortiz obtuvo insignia', 'Verificación aprobada por Admin'],
-            ['3:05 PM', 'Disputa DSP-0892 abierta', 'Cobro incorrecto · $275.00 MXN'],
-            ['2:44 PM', 'Nueva cuenta de Tutor', 'Jorge Mora · Inglés'],
-          ].map(([time, title, detail]) => (
-            <div key={time} className="flex items-center gap-4 py-3">
-              <span className="w-20 text-[12px] font-semibold text-g600">{time}</span>
-              <span className="grid size-8 place-items-center rounded-full bg-g100"><Activity size={15} aria-hidden /></span>
-              <div><p className="font-semibold">{title}</p><p className="text-[12px] text-g600">{detail}</p></div>
-            </div>
-          ))}
-        </div>
+        <p className="mt-3 rounded-btn bg-g50 p-4 text-g600">Aún no hay actividad registrada.</p>
       </section>
     </div>
   )
@@ -404,10 +395,8 @@ function UsersSection({ sessions }: { sessions: ClassSession[] }) {
         </div>
         <ListState
           count={pageItems.length}
-          emptyTitle="No encontramos usuarios"
-          emptyDescription="Ajusta la búsqueda o limpia los filtros para consultar todas las cuentas."
-          emptyAction="Limpiar filtros"
-          onEmptyAction={() => { setQuery(''); setRoleFilter('Todos'); setStatusFilter('Todos'); setPage(1) }}
+          emptyTitle="No hay usuarios para mostrar"
+          emptyDescription="El listado de cuentas todavía no está conectado a Supabase."
           loadingLabel="Cargando usuarios"
           className="p-4"
         >
@@ -450,49 +439,267 @@ function UsersSection({ sessions }: { sessions: ClassSession[] }) {
 }
 
 function VerificationSection() {
-  const [records, setRecords] = useState(INITIAL_VERIFICATIONS)
-  const [selectedId, setSelectedId] = useState('VER-1024')
-  const [checks, setChecks] = useState({ name: true, institution: true, license: false })
+  const [records, setRecords] = useState<TutorCredentialReviewRecord[]>([])
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [checks, setChecks] = useState({ name: false, title: false, license: false })
   const [rejecting, setRejecting] = useState(false)
   const [reason, setReason] = useState('')
   const [reasonError, setReasonError] = useState(false)
-  const selected = records.find((item) => item.id === selectedId) ?? records[0]
-  const allChecked = checks.name && checks.institution && checks.license
+  const [loading, setLoading] = useState(true)
+  const [refreshKey, setRefreshKey] = useState(0)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [openingPath, setOpeningPath] = useState<string | null>(null)
+
+  useEffect(() => {
+    let active = true
+    setLoading(true)
+    setLoadError(null)
+    void listTutorCredentialReviews()
+      .then((items) => {
+        if (!active) return
+        setRecords(items)
+        setSelectedId((current) =>
+          current && items.some((item) => item.userId === current)
+            ? current
+            : items[0]?.userId ?? null,
+        )
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setLoadError(error instanceof Error ? error.message : 'No se pudieron cargar los expedientes.')
+        }
+      })
+      .finally(() => {
+        if (active) setLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [refreshKey])
+
+  const selected = records.find((item) => item.userId === selectedId) ?? null
+  const allChecked =
+    checks.name &&
+    checks.title &&
+    checks.license &&
+    Boolean(selected?.titleDocumentPath && selected.licenseDocumentPath)
+  const canDecide =
+    selected?.verificationStatus === 'pending' || selected?.verificationStatus === 'in_review'
+  const statusLabels: Record<TutorCredentialReviewStatus, ChipKey> = {
+    pending: 'Pendiente',
+    in_review: 'En revisión',
+    verified: 'Verificado',
+    rejected: 'Rechazado',
+  }
+
+  async function openDocument(path: string) {
+    setOpeningPath(path)
+    setActionError(null)
+    let viewer: Window | null = null
+    try {
+      viewer = window.open('about:blank', '_blank')
+      if (!viewer) throw new Error('Permite ventanas emergentes para abrir el documento.')
+      viewer.opener = null
+      const url = await createTutorCredentialUrl(path)
+      viewer.location.href = url
+    } catch (error) {
+      viewer?.close()
+      setActionError(error instanceof Error ? error.message : 'No se pudo abrir el documento.')
+    } finally {
+      setOpeningPath(null)
+    }
+  }
+
+  async function saveDecision(
+    status: Extract<TutorCredentialReviewStatus, 'verified' | 'rejected'>,
+    rejectionReason?: string,
+  ) {
+    if (!selected) return
+    setSaving(true)
+    setActionError(null)
+    try {
+      await reviewTutorCredentials(selected.userId, status, rejectionReason)
+      setRecords((current) =>
+        current.map((item) =>
+          item.userId === selected.userId
+            ? {
+                ...item,
+                verificationStatus: status,
+                reviewedAt: new Date().toISOString(),
+                rejectionReason: status === 'rejected' ? rejectionReason?.trim() ?? null : null,
+              }
+            : item,
+        ),
+      )
+      setRejecting(false)
+      setReason('')
+      setChecks({ name: false, title: false, license: false })
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'No se pudo guardar la decisión.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const header = (
+    <div>
+      <h1 className="text-[28px] font-bold">Verificación</h1>
+      <p className="text-g600">Revisa los documentos privados enviados por los Tutores.</p>
+    </div>
+  )
+
+  if (loading) {
+    return (
+      <div className="flex h-full flex-col">
+        {header}
+        <p role="status" className="mt-5 rounded-card border border-g200 bg-white p-5 text-g600">
+          Cargando expedientes…
+        </p>
+      </div>
+    )
+  }
+
+  if (loadError || records.length === 0) {
+    return (
+      <div className="flex h-full flex-col">
+        {header}
+        {loadError ? (
+          <div className="mt-5 rounded-card border border-err bg-err-bg p-5 text-err">
+            <p role="alert" className="font-semibold">{loadError}</p>
+            <Button className="mt-3" variant="secondary" onClick={() => setRefreshKey((value) => value + 1)}>
+              Reintentar
+            </Button>
+          </div>
+        ) : (
+          <ListState
+            count={0}
+            emptyTitle="Sin expedientes pendientes"
+            emptyDescription="Los documentos aparecerán aquí cuando los Tutores los envíen."
+            loadingLabel="Cargando expedientes"
+            className="mt-5 min-h-0 flex-1"
+          >
+            <div />
+          </ListState>
+        )}
+      </div>
+    )
+  }
+
+  if (!selected) return null
+
+  const ageHours = selected.submittedAt
+    ? Math.max(0, Math.floor((Date.now() - Date.parse(selected.submittedAt)) / 3_600_000))
+    : null
+  const subjectLabel = selected.subjects.length > 0
+    ? selected.subjects.join(', ')
+    : 'Sin materias registradas'
 
   return (
     <div className="flex h-full flex-col">
-      <div><h1 className="text-[28px] font-bold">Verificación</h1><p className="text-g600">Revisa expedientes profesionales dentro del plazo de 48 h.</p></div>
-      <ListState count={records.length} emptyTitle="Sin expedientes pendientes" emptyDescription="Los nuevos documentos enviados por Tutores aparecerán aquí." emptyAction="Actualizar expedientes" onEmptyAction={() => setRecords(INITIAL_VERIFICATIONS)} loadingLabel="Cargando expedientes" className="mt-5 min-h-0 flex-1">
+      {header}
       <div className="mt-5 grid min-h-0 flex-1 grid-cols-[340px_1fr] overflow-hidden rounded-card border border-g200 bg-white shadow-sm">
         <aside className="overflow-y-auto border-r border-g200 bg-g50 p-3">
-          <p className="mb-2 px-2 text-[12px] font-semibold text-g600">{records.filter((item) => item.status === 'En revisión').length} expedientes pendientes</p>
+          <p className="mb-2 px-2 text-[12px] font-semibold text-g600">
+            {records.filter((item) => item.verificationStatus === 'pending' || item.verificationStatus === 'in_review').length} expedientes pendientes
+          </p>
           <div className="flex flex-col gap-2">
-            {records.map((item) => (
-              <button key={item.id} onClick={() => { setSelectedId(item.id); setChecks({ name: true, institution: true, license: false }) }} className={cx('w-full rounded-btn border p-3 text-left', selectedId === item.id ? 'border-ink bg-white shadow-sm' : 'border-g200 bg-white')}>
-                <div className="flex justify-between gap-2"><p className="font-bold">{item.tutor}</p><StatusChip status={item.status} /></div>
-                <p className="mt-1 text-[12px] text-g600">{item.id} · {item.subject}</p>
-                <p className={cx('mt-2 flex items-center gap-1 text-[12px] font-bold', item.ageHours > 48 ? 'text-err' : 'text-g600')}><Clock size={13} aria-hidden />{item.ageHours} h en espera {item.ageHours > 48 && '· Supera 48 h'}</p>
-              </button>
-            ))}
+            {records.map((item) => {
+              const itemAgeHours = item.submittedAt
+                ? Math.max(0, Math.floor((Date.now() - Date.parse(item.submittedAt)) / 3_600_000))
+                : null
+              const itemCanDecide =
+                item.verificationStatus === 'pending' || item.verificationStatus === 'in_review'
+              return (
+                <button
+                  key={item.userId}
+                  onClick={() => {
+                    setSelectedId(item.userId)
+                    setChecks({ name: false, title: false, license: false })
+                    setActionError(null)
+                  }}
+                  className={cx('w-full rounded-btn border p-3 text-left', selectedId === item.userId ? 'border-ink bg-white shadow-sm' : 'border-g200 bg-white')}
+                >
+                  <div className="flex justify-between gap-2">
+                    <p className="truncate font-bold">{item.tutorName}</p>
+                    <StatusChip status={statusLabels[item.verificationStatus]} />
+                  </div>
+                  <p className="mt-1 truncate text-[12px] text-g600">
+                    {item.subjects.length > 0 ? item.subjects.join(', ') : 'Sin materias registradas'}
+                  </p>
+                  {itemAgeHours !== null && itemCanDecide && (
+                    <p className={cx('mt-2 flex items-center gap-1 text-[12px] font-bold', itemAgeHours > 48 ? 'text-err' : 'text-g600')}>
+                      <Clock size={13} aria-hidden />{itemAgeHours} h en espera{itemAgeHours > 48 && ' · Supera 48 h'}
+                    </p>
+                  )}
+                </button>
+              )
+            })}
           </div>
         </aside>
         <main className="grid min-h-0 grid-cols-[1fr_360px]">
           <section className="overflow-y-auto p-5">
-            <div className="flex items-center justify-between"><div><h2 className="text-[20px] font-bold">Expediente de {selected.tutor}</h2><p className="text-g600">{selected.subject} · {selected.id}</p></div><span className={cx('inline-flex min-h-8 items-center gap-1 rounded-full px-3 font-bold', selected.ageHours > 48 ? 'bg-err-bg text-err' : 'bg-warn-bg text-warn')}><Clock size={15} aria-hidden />{selected.ageHours} h</span></div>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-[20px] font-bold">Expediente de {selected.tutorName}</h2>
+                <p className="text-g600">{subjectLabel}</p>
+              </div>
+              <StatusChip status={statusLabels[selected.verificationStatus]} />
+            </div>
+            {ageHours !== null && (
+              <p className="mt-2 flex items-center gap-1 text-[13px] font-semibold text-g600">
+                <Clock size={15} aria-hidden /> Enviado hace {ageHours} h
+              </p>
+            )}
+            {actionError && <p role="alert" className="mt-3 rounded-btn border border-err bg-err-bg p-3 font-semibold text-err">{actionError}</p>}
             <div className="mt-5 grid grid-cols-2 gap-3">
-              {[['Título profesional', selected.institution, 'titulo-profesional.pdf'], ['Cédula profesional', selected.license, 'cedula-profesional.jpg']].map(([title, detail, file]) => (
-                <article key={title} className="rounded-card border border-g200 p-4"><FileText size={24} aria-hidden /><h3 className="mt-3 font-bold">{title}</h3><p className="mt-1 text-[12px] text-g600">{detail}</p><p className="mt-3 truncate rounded-btn bg-g100 p-2 text-[12px] font-semibold">{file}</p><Button full variant="secondary" className="mt-3">Abrir en visor</Button></article>
+              {([
+                ['title', 'Título profesional', selected.titleDocumentPath],
+                ['license', 'Cédula profesional', selected.licenseDocumentPath],
+              ] as const).map(([kind, title, path]) => (
+                <article key={kind} className="rounded-card border border-g200 p-4">
+                  <FileText size={24} aria-hidden />
+                  <h3 className="mt-3 font-bold">{title}</h3>
+                  <p className="mt-1 truncate text-[12px] text-g600">
+                    {path ? path.split('/').pop() : 'Documento no recibido'}
+                  </p>
+                  {path && (
+                    <Button
+                      full
+                      variant="secondary"
+                      className="mt-3"
+                      disabled={openingPath === path}
+                      onClick={() => void openDocument(path)}
+                    >
+                      {openingPath === path ? 'Abriendo…' : 'Abrir documento privado'}
+                    </Button>
+                  )}
+                </article>
               ))}
             </div>
-            <section className="mt-5 rounded-card border border-g200 p-4"><h3 className="font-bold">Datos del Tutor</h3><dl className="mt-3 grid grid-cols-2 gap-3 text-[13px]"><div><dt className="text-g600">Nombre</dt><dd className="font-semibold">{selected.tutor}</dd></div><div><dt className="text-g600">Institución</dt><dd className="font-semibold">{selected.institution}</dd></div><div><dt className="text-g600">Cédula</dt><dd className="font-semibold">{selected.license}</dd></div><div><dt className="text-g600">Zona</dt><dd className="font-semibold">Mérida, zona norte</dd></div></dl></section>
+            <section className="mt-5 rounded-card border border-g200 p-4">
+              <h3 className="font-bold">Datos del Tutor</h3>
+              <dl className="mt-3 grid grid-cols-2 gap-3 text-[13px]">
+                <div><dt className="text-g600">Nombre</dt><dd className="font-semibold">{selected.tutorName}</dd></div>
+                <div><dt className="text-g600">Nivel educativo</dt><dd className="font-semibold">{selected.educationLevel || 'Sin información'}</dd></div>
+                <div><dt className="text-g600">Materias</dt><dd className="font-semibold">{subjectLabel}</dd></div>
+                <div><dt className="text-g600">Estado de revisión</dt><dd><StatusChip status={statusLabels[selected.verificationStatus]} /></dd></div>
+              </dl>
+              {selected.rejectionReason && (
+                <p className="mt-3 rounded-btn border border-err bg-err-bg p-3 text-[13px] text-err">
+                  Motivo de rechazo registrado: {selected.rejectionReason}
+                </p>
+              )}
+            </section>
           </section>
           <aside className="overflow-y-auto border-l border-g200 bg-g50 p-5">
             <h2 className="text-[18px] font-bold">Checklist</h2>
-            <p className="mt-1 text-[12px] text-g600">Confirma cada punto contra los documentos del visor.</p>
+            <p className="mt-1 text-[12px] text-g600">Abre los documentos privados y confirma cada punto.</p>
             <div className="mt-4 flex flex-col gap-2">
               {([
                 ['name', 'Nombre coincide', 'El nombre es idéntico en cuenta, título y cédula.'],
-                ['institution', 'Institución reconocida', 'La institución y el programa son válidos.'],
+                ['title', 'Título revisado', 'Revisaste el documento de título profesional.'],
                 ['license', 'Cédula válida', 'El número y datos profesionales son vigentes.'],
               ] as const).map(([key, title, detail]) => (
                 <button key={key} type="button" role="checkbox" aria-checked={checks[key]} onClick={() => setChecks((prev) => ({ ...prev, [key]: !prev[key] }))} className={cx('flex min-h-16 items-center gap-3 rounded-btn border p-3 text-left', checks[key] ? 'border-ok bg-ok-bg' : 'border-g300 bg-white')}>
@@ -501,13 +708,67 @@ function VerificationSection() {
                 </button>
               ))}
             </div>
-            <Button full icon={BadgeCheck} className="mt-5" disabled={!allChecked || selected.status !== 'En revisión'} onClick={() => setRecords((prev) => prev.map((item) => item.id === selected.id ? { ...item, status: 'Verificado' } : item))}>Aprobar y otorgar insignia</Button>
-            <Button full variant="destructive" className="mt-2" disabled={selected.status !== 'En revisión'} onClick={() => { setRejecting(true); setReason('') }}>Rechazar</Button>
+            {!selected.titleDocumentPath || !selected.licenseDocumentPath ? (
+              <p className="mt-4 rounded-btn border border-warn bg-warn-bg p-3 text-[12px] font-semibold text-warn">
+                Para aprobar, el Tutor debe enviar ambos documentos.
+              </p>
+            ) : null}
+            <Button
+              full
+              icon={BadgeCheck}
+              className="mt-5"
+              disabled={!canDecide || !allChecked || saving}
+              onClick={() => void saveDecision('verified')}
+            >
+              {saving ? 'Guardando…' : 'Aprobar y otorgar insignia'}
+            </Button>
+            <Button
+              full
+              variant="destructive"
+              className="mt-2"
+              disabled={!canDecide || saving}
+              onClick={() => { setRejecting(true); setReason(''); setReasonError(false) }}
+            >
+              Rechazar
+            </Button>
           </aside>
         </main>
       </div>
-      </ListState>
-      {rejecting && <div className="fixed inset-0 z-40 grid place-items-center bg-black/50 p-6"><div role="dialog" aria-modal="true" className="w-full max-w-lg rounded-card bg-white p-6 shadow-xl"><h2 className="text-[20px] font-bold">Rechazar expediente</h2><p className="mt-1 text-g600">El Tutor recibirá el motivo y podrá volver a subir sus documentos.</p><label htmlFor="reject-reason" className="mt-4 block text-[12px] font-semibold text-g700">Motivo obligatorio</label><textarea id="reject-reason" rows={4} value={reason} onChange={(e) => { setReason(e.target.value); setReasonError(false) }} className={cx('mt-1 w-full rounded-btn border p-3', reasonError ? 'border-2 border-err' : 'border-g500')} placeholder="Describe qué documento o dato debe corregirse." />{reasonError && <p className="mt-1 font-semibold text-err">Escribe un motivo antes de rechazar.</p>}<div className="mt-5 flex justify-end gap-2"><Button variant="text" onClick={() => setRejecting(false)}>Cancelar</Button><Button variant="destructive" onClick={() => { if (!reason.trim()) { setReasonError(true); return }; setRecords((prev) => prev.map((item) => item.id === selected.id ? { ...item, status: 'Rechazado' } : item)); setRejecting(false) }}>Rechazar y notificar</Button></div></div></div>}
+      {rejecting && (
+        <div className="fixed inset-0 z-40 grid place-items-center bg-black/50 p-6">
+          <div role="dialog" aria-modal="true" className="w-full max-w-lg rounded-card bg-white p-6 shadow-xl">
+            <h2 className="text-[20px] font-bold">Rechazar expediente</h2>
+            <p className="mt-1 text-g600">El motivo quedará guardado para el Tutor.</p>
+            <label htmlFor="reject-reason" className="mt-4 block text-[12px] font-semibold text-g700">Motivo obligatorio</label>
+            <textarea
+              id="reject-reason"
+              rows={4}
+              maxLength={1000}
+              value={reason}
+              onChange={(event) => { setReason(event.target.value); setReasonError(false) }}
+              className={cx('mt-1 w-full rounded-btn border p-3', reasonError ? 'border-2 border-err' : 'border-g500')}
+              placeholder="Describe qué documento o dato debe corregirse."
+            />
+            {reasonError && <p className="mt-1 font-semibold text-err">Escribe un motivo antes de rechazar.</p>}
+            <div className="mt-5 flex justify-end gap-2">
+              <Button variant="text" disabled={saving} onClick={() => setRejecting(false)}>Cancelar</Button>
+              <Button
+                variant="destructive"
+                disabled={saving}
+                onClick={() => {
+                  if (!reason.trim()) {
+                    setReasonError(true)
+                    return
+                  }
+                  void saveDecision('rejected', reason)
+                }}
+              >
+                {saving ? 'Guardando…' : 'Rechazar y guardar motivo'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -536,12 +797,12 @@ function ModerationSection() {
         {notice && <p role="status" className="rounded-btn bg-ok-bg px-4 py-3 font-semibold text-ok"><CheckCircle2 size={17} className="mr-2 inline" aria-hidden />{notice}</p>}
       </div>
       <div className="mt-5 flex gap-2 border-b border-g300" role="tablist">
-        <button role="tab" aria-selected={tab === 'profiles'} onClick={() => setTab('profiles')} className={cx('min-h-12 border-b-2 px-5 font-semibold', tab === 'profiles' ? 'border-ink text-ink' : 'border-transparent text-g600')}>Perfiles reportados <span className="ml-1 rounded-full bg-err-bg px-2 py-1 text-[12px] text-err">6</span></button>
-        <button role="tab" aria-selected={tab === 'reviews'} onClick={() => setTab('reviews')} className={cx('min-h-12 border-b-2 px-5 font-semibold', tab === 'reviews' ? 'border-ink text-ink' : 'border-transparent text-g600')}>Reseñas <span className="ml-1 rounded-full bg-warn-bg px-2 py-1 text-[12px] text-warn">4</span></button>
+        <button role="tab" aria-selected={tab === 'profiles'} onClick={() => setTab('profiles')} className={cx('min-h-12 border-b-2 px-5 font-semibold', tab === 'profiles' ? 'border-ink text-ink' : 'border-transparent text-g600')}>Perfiles reportados <span className="ml-1 rounded-full bg-err-bg px-2 py-1 text-[12px] text-err">{profiles.length}</span></button>
+        <button role="tab" aria-selected={tab === 'reviews'} onClick={() => setTab('reviews')} className={cx('min-h-12 border-b-2 px-5 font-semibold', tab === 'reviews' ? 'border-ink text-ink' : 'border-transparent text-g600')}>Reseñas <span className="ml-1 rounded-full bg-warn-bg px-2 py-1 text-[12px] text-warn">{reviews.length}</span></button>
       </div>
 
       {tab === 'profiles' ? (
-        <div className="mt-4 grid grid-cols-2 gap-4">
+        profiles.length > 0 ? <div className="mt-4 grid grid-cols-2 gap-4">
           {profiles.map((profile) => (
             <article key={profile.id} className="rounded-card border border-g200 bg-white p-5 shadow-sm">
               <div className="flex items-start justify-between"><div><p className="text-[12px] font-semibold text-g600">{profile.id}</p><h2 className="text-[18px] font-bold">{profile.name}</h2></div><span className="rounded-full bg-err-bg px-3 py-1 font-bold text-err">{profile.reports} reportes</span></div>
@@ -550,11 +811,11 @@ function ModerationSection() {
               <div className="mt-4 flex flex-wrap gap-2"><Button icon={MessageSquare} onClick={() => openAction('Advertir')}>Advertir</Button><Button variant="destructive" icon={UserX} onClick={() => openAction('Suspender perfil')}>Suspender perfil</Button><Button variant="secondary" onClick={() => openAction('Descartar')}>Descartar</Button></div>
             </article>
           ))}
-        </div>
+        </div> : <p className="mt-4 rounded-card border border-dashed border-g300 bg-white p-6 text-center text-g600">No hay perfiles reportados.</p>
       ) : (
         <div className="mt-4">
           <div className="mb-4 flex items-start gap-3 rounded-card border border-info bg-info-bg p-4 text-info"><ShieldCheck size={22} className="shrink-0" aria-hidden /><div><p className="font-bold">Regla de moderación</p><p>Las críticas honestas no se ocultan; solo reseñas con insultos, datos personales o spam.</p></div></div>
-          <div className="grid grid-cols-2 gap-4">
+          {reviews.length > 0 ? <div className="grid grid-cols-2 gap-4">
             {reviews.map((review) => (
               <article key={review.id} className="rounded-card border border-g200 bg-white p-5 shadow-sm">
                 <div className="flex justify-between"><div><p className="font-bold">{review.author} sobre {review.tutor}</p><p className="text-[12px] text-g600">{review.id}</p></div><span className="font-semibold text-err">{review.reports} {review.reports === 1 ? 'reporte' : 'reportes'}</span></div>
@@ -563,7 +824,7 @@ function ModerationSection() {
                 <div className="mt-4 flex gap-2"><Button icon={Check} onClick={() => openAction('Mantener')}>Mantener</Button><Button variant="destructive" onClick={() => openAction('Ocultar')}>Ocultar</Button></div>
               </article>
             ))}
-          </div>
+          </div> : <p className="rounded-card border border-dashed border-g300 bg-white p-6 text-center text-g600">No hay reseñas reportadas.</p>}
         </div>
       )}
 
@@ -573,71 +834,46 @@ function ModerationSection() {
 }
 
 function PaymentsSection() {
-  const [selected, setSelected] = useState('PAG-7001')
-  const [resolution, setResolution] = useState('Reembolsar')
-  const [action, setAction] = useState<string | null>(null)
-  const [note, setNote] = useState('')
-  const [error, setError] = useState(false)
-  const [resolvedNotice, setResolvedNotice] = useState('')
-  const [payments, setPayments] = useState<AdminPaymentRow[]>(INITIAL_ADMIN_PAYMENTS)
-  const disputeStatus = payments.find((payment) => payment.payment === 'PAG-7001')?.status ?? 'En disputa'
+  const payments: AdminPaymentRow[] = []
 
   return (
     <div>
-      <div className="flex items-start justify-between"><div><h1 className="text-[28px] font-bold">Pagos y disputas</h1><p className="text-g600">Operaciones en MXN · corte del 23 de noviembre de 2026, UTC-6.</p></div>{resolvedNotice && <div className="w-96"><Toast kind="ok" text={resolvedNotice} /></div>}</div>
-      <section className="mt-5 grid grid-cols-4 gap-3"><KpiCard label="Volumen hoy" value="$46,500" detail="186 operaciones" icon={CircleDollarSign} /><KpiCard label="Fondos retenidos" value={disputeStatus === 'En disputa' ? '$18,925' : '$18,650'} detail="48 h de protección" icon={Lock} tone="warn" /><KpiCard label="Disputas abiertas" value={disputeStatus === 'En disputa' ? '7' : '6'} detail={disputeStatus === 'En disputa' ? '$2,145.00 MXN' : '$1,870.00 MXN'} icon={AlertTriangle} tone={disputeStatus === 'En disputa' ? 'err' : 'neutral'} /><KpiCard label="Reembolsos" value={disputeStatus === 'Reembolsado' ? '$3,755' : '$3,480'} detail="Últimos 30 días" icon={RotateCcw} /></section>
+      <div><h1 className="text-[28px] font-bold">Pagos y disputas</h1><p className="text-g600">Los datos aparecerán cuando los pagos estén conectados.</p></div>
+      <section className="mt-5 grid grid-cols-4 gap-3">
+        <KpiCard label="Volumen hoy" value="$0.00" detail="Sin operaciones registradas" icon={CircleDollarSign} />
+        <KpiCard label="Fondos retenidos" value="$0.00" detail="Sin operaciones registradas" icon={Lock} />
+        <KpiCard label="Disputas abiertas" value="0" detail="Sin disputas registradas" icon={AlertTriangle} />
+        <KpiCard label="Reembolsos" value="$0.00" detail="Sin reembolsos registrados" icon={RotateCcw} />
+      </section>
       <div className="mt-4 grid grid-cols-[1.15fr_1fr] gap-4">
-        <ListState count={payments.length} emptyTitle="Sin pagos registrados" emptyDescription="Los pagos y disputas aparecerán cuando existan operaciones." emptyAction="Actualizar pagos" onEmptyAction={() => setSelected('PAG-7001')} loadingLabel="Cargando pagos y disputas">
-        <section className="overflow-hidden rounded-card border border-g200 bg-white shadow-sm">
-          <table className="w-full text-left text-[13px]"><thead className="bg-g100 text-[12px] text-g600"><tr><th className="p-3">Pago / reserva</th><th className="p-3">Partes</th><th className="p-3">Monto</th><th className="p-3">Estado</th></tr></thead><tbody className="divide-y divide-g200">{payments.map((payment) => <tr key={payment.payment} onClick={() => setSelected(payment.payment)} className={cx('cursor-pointer', selected === payment.payment && 'bg-info-bg')}><td className="p-3"><p className="font-bold">{payment.payment}</p><p className="text-g600">{payment.reservation}</p>{payment.series && <p className="mt-1 font-semibold text-err">{payment.series}</p>}</td><td className="p-3">{payment.people}</td><td className="p-3 font-bold">{payment.amount} MXN</td><td className="p-3"><StatusChip status={payment.status} /></td></tr>)}</tbody></table>
-        </section>
+        <ListState count={payments.length} emptyTitle="Sin pagos registrados" emptyDescription="Los pagos y disputas aparecerán aquí cuando se conecte la pasarela de pago." loadingLabel="Cargando pagos y disputas">
+          <div />
         </ListState>
-        <aside className="rounded-card border border-g200 bg-white p-5 shadow-sm">
-          <div className="flex items-start justify-between"><div><p className="text-[12px] font-semibold text-g600">DSP-0892 · PAG-7001 · RES-1001</p><h2 className="text-[20px] font-bold">Detalle de disputa</h2><p>Sofía Mena (Alumno) · Carlos Chan (Tutor)</p></div><StatusChip status={disputeStatus} /></div>
-          <div className={cx('mt-4 flex items-center justify-between rounded-btn p-3', disputeStatus === 'En disputa' ? 'bg-warn-bg text-warn' : 'bg-ok-bg text-ok')}><span className="font-semibold">{disputeStatus === 'En disputa' ? 'Fondos retenidos' : 'Resolución aplicada'}</span><strong className="text-[20px]">$275.00 MXN</strong></div>
-          <h3 className="mt-4 font-bold">Línea de tiempo</h3>
-          <ol className="mt-2 border-l-2 border-g300 pl-4 text-[12px]">{[['4:00 PM', 'Clase confirmada'], ['4:00 PM', 'Check-in del Alumno'], ['4:15 PM', 'Ventana de 15 min finalizada'], ['4:16 PM', 'Sin check-in del Tutor'], ['4:22 PM', 'Reporte del Alumno']].map(([time, text]) => <li key={`${time}-${text}`} className="relative pb-2 before:absolute before:-left-[21px] before:top-1 before:size-2 before:rounded-full before:bg-ink"><span className="font-bold">{time}</span> · {text}</li>)}</ol>
-          <div className="mt-2 grid grid-cols-2 gap-2"><div className="rounded-btn bg-ok-bg p-3 text-ok"><CheckCircle2 size={17} aria-hidden /><p className="mt-1 font-bold">Check-in Alumno</p><p className="text-[12px]">3:59 PM · confirmado</p></div><div className="rounded-btn bg-err-bg p-3 text-err"><XCircle size={17} aria-hidden /><p className="mt-1 font-bold">Check-in Tutor</p><p className="text-[12px]">No registrado</p></div></div>
-          <div className="mt-2 rounded-btn border border-g200 p-3"><p className="flex items-center gap-2 font-bold"><MessageSquare size={17} aria-hidden />Chat asociado</p><p className="mt-1 text-[12px] text-g600">“Estoy conectado, ¿iniciamos?” · Alumno, 4:07 PM</p><p className="text-[12px] text-g600">Sin respuesta del Tutor.</p></div>
-          <div className="mt-3 rounded-btn border border-info bg-info-bg p-3 text-info"><p className="font-bold">Resolución sugerida automática</p><p>Sin check-in del tutor: reembolso al alumno</p><select aria-label="Resolución elegida" value={resolution} onChange={(event) => setResolution(event.target.value)} className="mt-2 min-h-11 w-full rounded-btn border border-info bg-white px-3 text-ink"><option>Reembolsar</option><option>Liberar</option><option>Reembolso parcial</option></select></div>
-          {disputeStatus === 'En disputa' ? <div className="mt-3 grid grid-cols-3 gap-2"><Button className="!px-2" onClick={() => setAction('Reembolsar')}>Reembolsar</Button><Button variant="secondary" className="!px-2" onClick={() => setAction('Liberar')}>Liberar</Button><Button variant="secondary" className="!px-2" onClick={() => setAction('Reembolso parcial')}>Parcial</Button></div> : <p className="mt-3 flex items-center gap-2 rounded-btn bg-ok-bg p-3 font-semibold text-ok"><CheckCircle2 size={18} aria-hidden />DSP-0892 cerrada y ambas partes notificadas.</p>}
+        <aside className="grid min-h-48 place-items-center rounded-card border border-dashed border-g300 bg-white p-5 text-center text-g600">
+          Selecciona un pago cuando haya operaciones registradas.
         </aside>
       </div>
-      {action && <div className="fixed inset-0 z-40 grid place-items-center bg-black/50 p-6"><div role="dialog" aria-modal="true" className="w-full max-w-lg rounded-card bg-white p-6 shadow-xl"><h2 className="text-[20px] font-bold">{action} fondos</h2><p className="mt-1 text-g600">Confirma la resolución de DSP-0892. Se avisará al Alumno y al Tutor.</p><label htmlFor="resolution-note" className="mt-4 block text-[12px] font-semibold text-g700">Nota obligatoria</label><textarea id="resolution-note" rows={4} value={note} onChange={(event) => { setNote(event.target.value); setError(false) }} className={cx('mt-1 w-full rounded-btn border p-3', error ? 'border-2 border-err' : 'border-g500')} placeholder="Explica la evidencia y el monto de la resolución." />{action === 'Reembolso parcial' && <label className="mt-3 block text-[12px] font-semibold text-g700">Monto parcial (MXN)<input defaultValue="137.50" inputMode="decimal" className="mt-1 min-h-11 w-full rounded-btn border border-g500 px-3 text-[16px]" /></label>}{error && <p className="mt-1 font-semibold text-err">Agrega una nota antes de confirmar.</p>}<div className="mt-5 flex justify-end gap-2"><Button variant="text" onClick={() => setAction(null)}>Cancelar</Button><Button onClick={() => { if (note.trim().length < 10) { setError(true); return }; const nextStatus: PaymentStatus = action === 'Liberar' ? 'Liberado' : 'Reembolsado'; setPayments((current) => current.map((payment) => payment.payment === 'PAG-7001' ? { ...payment, status: nextStatus, series: `Serie semanal · clase 2 de 4 · ${action.toLowerCase()}` } : payment)); setResolvedNotice(`DSP-0892 resuelta: ${action.toLowerCase()}. Se notificó a ambas partes.`); window.setTimeout(() => setResolvedNotice(''), 2400); setAction(null); setNote('') }}>Confirmar y avisar a ambos</Button></div></div></div>}
     </div>
   )
 }
 
 function CommissionsSection() {
-  const [tab, setTab] = useState<'rules' | 'history'>('rules')
-  const [commission, setCommission] = useState(15)
-  const [studentFee, setStudentFee] = useState(10)
-  const [modal, setModal] = useState(false)
-  const adjust = (value: number, delta: number) => Math.min(30, Math.max(0, value + delta))
   return (
-    <div>
-      <div><h1 className="text-[28px] font-bold">Comisiones y planes</h1><p className="text-g600">Configura tarifas, retenciones y políticas en MXN.</p></div>
-      <div className="mt-5 flex gap-2 border-b border-g300" role="tablist"><button role="tab" aria-selected={tab === 'rules'} onClick={() => setTab('rules')} className={cx('min-h-12 border-b-2 px-5 font-semibold', tab === 'rules' ? 'border-ink' : 'border-transparent text-g600')}>Tarifas y planes</button><button role="tab" aria-selected={tab === 'history'} onClick={() => setTab('history')} className={cx('min-h-12 border-b-2 px-5 font-semibold', tab === 'history' ? 'border-ink' : 'border-transparent text-g600')}>Historial de tarifas</button></div>
-      {tab === 'rules' ? <div className="mt-4 grid grid-cols-[1.2fr_1fr] gap-4">
-        <div className="flex flex-col gap-4">
-          <section className="rounded-card border border-g200 bg-white p-5 shadow-sm"><div className="flex items-center gap-2"><SlidersHorizontal size={20} aria-hidden /><h2 className="text-[18px] font-bold">Reglas de cobro</h2></div><div className="mt-4 grid grid-cols-2 gap-3">
-            {[['Comisión al Tutor', commission, setCommission], ['Cargo al Alumno', studentFee, setStudentFee]].map(([label, value, setter]) => <div key={label as string} className="rounded-btn border border-g200 p-4"><p className="text-[12px] font-semibold text-g600">{label as string}</p><div className="mt-2 flex items-center justify-between"><button aria-label={`Reducir ${label}`} onClick={() => (setter as typeof setCommission)(adjust(value as number, -0.5))} className="grid size-11 place-items-center rounded-btn border border-g300"><Minus size={17} /></button><strong className="text-[24px] tabular-nums">{value as number}%</strong><button aria-label={`Aumentar ${label}`} onClick={() => (setter as typeof setCommission)(adjust(value as number, 0.5))} className="grid size-11 place-items-center rounded-btn border border-g300"><Plus size={17} /></button></div><input aria-label={`${label} de 0 a 30%`} type="range" min="0" max="30" step="0.5" value={value as number} onChange={(event) => (setter as typeof setCommission)(Number(event.target.value))} className="mt-3 w-full accent-ink" /><p className="text-center text-[12px] text-g600">0% a 30% · pasos de 0.5%</p></div>)}
-            <div className="rounded-btn border border-g200 p-4"><p className="text-[12px] text-g600">Retención</p><p className="mt-1 text-[22px] font-bold">48 h</p><p className="text-[12px] text-g600">Después de la clase</p></div><div className="rounded-btn border border-g200 p-4"><p className="text-[12px] text-g600">Descuento máximo en paquetes</p><p className="mt-1 text-[22px] font-bold">20%</p><p className="text-[12px] text-g600">Sobre la tarifa regular</p></div>
-          </div><div className="mt-3 rounded-btn bg-g100 p-4"><p className="font-bold">Política de cancelación</p><p className="mt-1">Reembolso total con más de 24 h · 50% con menos de 24 h.</p></div><Button className="mt-4" onClick={() => setModal(true)}>Guardar cambios</Button></section>
-          <section className="rounded-card border border-g200 bg-white p-5 shadow-sm"><h2 className="text-[18px] font-bold">Planes editables</h2><div className="mt-3 grid grid-cols-2 gap-3"><article className="rounded-btn border border-g300 p-4"><p className="font-bold">Estándar</p><p className="text-[22px] font-bold">$0 MXN</p><p className="text-g600">15% de comisión</p><Button variant="secondary" className="mt-3">Editar plan</Button></article><article className="rounded-btn border-2 border-ink p-4"><p className="font-bold">Tutor Destacado</p><p className="text-[22px] font-bold">$299 MXN</p><p className="text-g600">5% de comisión</p><Button variant="secondary" className="mt-3">Editar plan</Button></article></div></section>
-        </div>
-        <aside className="h-fit rounded-card bg-ink p-6 text-white shadow-sm"><p className="text-[12px] font-semibold text-g300">Simulador · clase de $250.00 MXN</p><h2 className="mt-1 text-[22px] font-bold">Distribución del cobro</h2><dl className="mt-5 flex flex-col gap-4"><div className="flex justify-between border-b border-g700 pb-3"><dt>Paga el Alumno</dt><dd className="text-[20px] font-bold">$275.00</dd></div><div className="flex justify-between border-b border-g700 pb-3"><dt>Recibe el Tutor</dt><dd className="text-[20px] font-bold">$212.50</dd></div><div className="flex justify-between"><dt>Recibe la plataforma</dt><dd className="text-[20px] font-bold">$62.50</dd></div></dl><p className="mt-5 rounded-btn bg-g700 p-3 text-[12px] text-g200">Valores con comisión al Tutor de 15% y cargo al Alumno de 10%. Todos los importes están en MXN.</p></aside>
-      </div> : <section className="mt-4 overflow-hidden rounded-card border border-g200 bg-white shadow-sm"><div className="flex items-center gap-2 border-b border-g200 p-5"><History size={20} aria-hidden /><h2 className="text-[18px] font-bold">Historial de tarifas</h2></div><table className="w-full text-left"><thead className="bg-g100 text-[12px] text-g600"><tr><th className="p-3">Fecha efectiva</th><th className="p-3">Cambio</th><th className="p-3">Admin</th><th className="p-3">Estado</th></tr></thead><tbody className="divide-y divide-g200"><tr><td className="p-4">1 nov 2026 · 00:00 UTC-6</td><td className="p-4">Comisión Estándar: 12.5% → 15%</td><td className="p-4">Ana Méndez</td><td className="p-4"><span className="font-semibold text-ok">Aplicado</span></td></tr><tr><td className="p-4">15 oct 2026 · 00:00 UTC-6</td><td className="p-4">Retención: 24 h → 48 h</td><td className="p-4">Rubén Díaz</td><td className="p-4"><span className="font-semibold text-ok">Aplicado</span></td></tr></tbody></table></section>}
-      {modal && <div className="fixed inset-0 z-40 grid place-items-center bg-black/50 p-6"><div role="dialog" aria-modal="true" className="w-full max-w-lg rounded-card bg-white p-6 shadow-xl"><h2 className="text-[20px] font-bold">Confirmar nuevas tarifas</h2><p className="mt-2 rounded-btn border border-warn bg-warn-bg p-4 font-semibold text-warn">Aplicará a clases reservadas desde las 00:00 (UTC-6).</p><p className="mt-3 text-g600">Las reservas existentes conservarán las condiciones vigentes al momento de reservar.</p><div className="mt-5 flex justify-end gap-2"><Button variant="text" onClick={() => setModal(false)}>Cancelar</Button><Button onClick={() => setModal(false)}>Confirmar cambios</Button></div></div></div>}
-    </div>
+    <section>
+      <h1 className="text-[28px] font-bold">Comisiones y planes</h1>
+      <p className="text-g600">La configuración de tarifas y planes todavía no está conectada.</p>
+      <p className="mt-5 rounded-card border border-dashed border-g300 bg-white p-6 text-center text-g600">
+        No hay reglas ni cambios registrados.
+      </p>
+    </section>
   )
 }
 
 function GenericAdminSection({ section }: { section: AdminSection }) {
   const sections: Partial<Record<AdminSection, [string, string, typeof Gavel]>> = {
     moderation: ['Moderación', 'Reportes de conducta, contenido y contacto externo.', Gavel],
-    payments: ['Pagos y disputas', 'Pagos retenidos, reembolsos y casos como DSP-0892.', CreditCard],
-    commissions: ['Comisiones y planes', 'Reglas de 15% Estándar y 5% Tutor Destacado.', CircleDollarSign],
+    payments: ['Pagos y disputas', 'Los datos aparecerán cuando los pagos estén conectados.', CreditCard],
+    commissions: ['Comisiones y planes', 'La configuración de tarifas todavía no está conectada.', CircleDollarSign],
     metrics: ['Métricas', 'Reservas, conversión, retención e ingresos en MXN.', BarChart3],
     settings: ['Ajustes', 'Seguridad, permisos, notificaciones y políticas.', Settings],
   }
@@ -645,7 +881,7 @@ function GenericAdminSection({ section }: { section: AdminSection }) {
   if (!content) return null
   const [title, detail, Icon] = content
   return (
-    <div><h1 className="text-[28px] font-bold">{title}</h1><p className="text-g600">{detail}</p><section className="mt-5 grid grid-cols-3 gap-4">{['Pendientes', 'En revisión', 'Resueltos'].map((label, index) => <article key={label} className="rounded-card border border-g200 bg-white p-5 shadow-sm"><Icon size={22} aria-hidden /><p className="mt-4 text-[13px] font-semibold text-g600">{label}</p><p className="mt-1 text-[26px] font-bold">{[7, 12, 84][index]}</p><button className="mt-3 min-h-11 font-semibold underline underline-offset-4">Ver registros</button></article>)}</section></div>
+    <div><h1 className="text-[28px] font-bold">{title}</h1><p className="text-g600">{detail}</p><section className="mt-5 rounded-card border border-dashed border-g300 bg-white p-6 text-center text-g600">No hay información registrada.</section></div>
   )
 }
 
@@ -666,6 +902,13 @@ export function AdminApp({
 }) {
   const session = useAuthSession()
   const authenticated = session?.role === 'admin'
+  const adminName = session?.fullName || session?.email || 'Admin'
+  const adminInitials = adminName
+    .split(/\s+/)
+    .map((part) => part[0])
+    .slice(0, 2)
+    .join('')
+    .toUpperCase()
   const [section, setSection] = useState<AdminSection>('home')
   const [globalQuery, setGlobalQuery] = useState('')
   const [sidebarOpen, setSidebarOpen] = useState(true)
@@ -710,7 +953,7 @@ export function AdminApp({
           <button type="button" onClick={() => setSidebarOpen((value) => !value)} aria-label="Alternar sidebar" className="grid size-11 place-items-center rounded-full hover:bg-g100"><Menu size={22} aria-hidden /></button>
           <div className="relative max-w-xl flex-1"><Search size={18} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-g500" aria-hidden /><input value={globalQuery} onChange={(e) => setGlobalQuery(e.target.value)} placeholder="Buscar usuarios, reservas, pagos o disputas" aria-label="Búsqueda global" className="min-h-11 w-full rounded-btn border border-g500 bg-g50 pl-10 pr-4 outline-none focus:border-ink" /></div>
           <span className="inline-flex min-h-8 items-center gap-1 rounded-full bg-g100 px-3 text-[12px] font-semibold"><Clock size={14} aria-hidden /> Mérida (UTC-6)</span>
-          <button type="button" className="relative grid size-11 place-items-center rounded-full hover:bg-g100" aria-label="Notificaciones"><Bell size={21} aria-hidden /><span className="absolute right-1 top-1 grid size-5 place-items-center rounded-full bg-err text-[11px] font-bold text-white">7</span></button>
+          <button type="button" className="grid size-11 place-items-center rounded-full hover:bg-g100" aria-label="Notificaciones"><Bell size={21} aria-hidden /></button>
           <div className="relative">
             <button
               type="button"
@@ -719,10 +962,10 @@ export function AdminApp({
               onClick={() => setUserMenuOpen((open) => !open)}
               className="flex min-h-11 items-center gap-2.5 rounded-btn border border-g200 bg-white px-3 py-1.5 text-left hover:border-ink hover:bg-g50"
             >
-              <span className="grid size-9 shrink-0 place-items-center rounded-full bg-ink text-[13px] font-bold text-white" aria-hidden>AM</span>
+              <span className="grid size-9 shrink-0 place-items-center rounded-full bg-ink text-[13px] font-bold text-white" aria-hidden>{adminInitials}</span>
               <span>
-                <span className="block text-[14px] font-semibold leading-tight text-ink">Ana Méndez</span>
-                <span className="block text-[12px] leading-tight text-g600">Admin de operaciones</span>
+                <span className="block text-[14px] font-semibold leading-tight text-ink">{adminName}</span>
+                <span className="block text-[12px] leading-tight text-g600">Administrador</span>
               </span>
               <ChevronDown size={16} className="shrink-0 text-g600" aria-hidden />
             </button>

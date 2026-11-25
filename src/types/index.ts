@@ -106,9 +106,9 @@ export interface Alumno {
   id: string
   name: string
   photo: string
-  career: string
-  preferredMode: PreferredMode
-  zone: string
+  career: string | null
+  preferredMode: PreferredMode | null
+  zone: string | null
   email: string
 }
 export type StudentProfileData = Alumno
@@ -164,6 +164,10 @@ export interface Mensaje {
   time: string
   read: boolean
   attachmentName?: string
+  attachmentPath?: string
+  attachmentType?: string
+  attachmentSize?: number
+  attachmentUrl?: string
 }
 export type ChatMessage = Mensaje
 
@@ -235,6 +239,51 @@ export interface AvailabilityBlock {
   time: string
   state: 'disponible' | 'bloqueado'
   mode?: ClassMode
+}
+
+export interface TutorWeeklyAvailability {
+  id: string
+  weekday: number
+  startTime: string
+  mode: ClassMode
+}
+
+export type ClassBookingStatus =
+  | 'pending_confirmation'
+  | 'confirmed'
+  | 'rejected'
+  | 'cancelled'
+  | 'reschedule_pending'
+  | 'completed'
+
+export interface ClassBookingRecord {
+  id: string
+  tutorUserId: string
+  studentUserId: string
+  tutorName: string
+  studentName: string
+  subject: string
+  startsAt: string
+  endsAt: string
+  mode: ClassMode
+  location: string | null
+  status: ClassBookingStatus
+  cancellationReason: string | null
+  cancelledBy: string | null
+  rescheduleProposedBy: string | null
+  proposedStartsAt: string | null
+  proposedMode: ClassMode | null
+  proposedLocation: string | null
+}
+
+export interface ClassNotificationRecord {
+  id: string
+  bookingId: string
+  eventType: string
+  title: string
+  message: string
+  createdAt: string
+  readAt: string | null
 }
 
 export interface SavedCardItem {

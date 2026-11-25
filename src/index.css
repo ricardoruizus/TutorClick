@@ -3,6 +3,11 @@
 @import './tokens.css';
 
 @layer base {
+  html,
+  body,
+  #root {
+    min-height: 100dvh;
+  }
   body {
     font-family: var(--font-sans);
     color: var(--color-ink);

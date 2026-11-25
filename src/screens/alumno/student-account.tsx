@@ -29,14 +29,14 @@ import {
   Users,
   Video,
   X,
+  type LucideIcon,
 } from 'lucide-react'
-import { BottomNav, Button, StatusChip, TopBar, studentNav } from '../../components/ui/ds'
+import { BottomNav, Button, StatusChip, TopBar, studentNav, type ChipKey } from '../../components/ui/ds'
 import { ListState } from '../../components/ui/list-state'
 import {
   DEFAULT_NOTIFICATION_PREFS,
   DEFAULT_SAVED_CARDS,
   DEFAULT_STUDENT_PROFILE,
-  TUTOR_CATALOG,
   formatMoney,
 } from '../../data/mock'
 import type {
@@ -71,6 +71,17 @@ export type AccountSubscreen =
   | 'settings-notifications'
   | 'settings-privacy'
   | 'settings-support'
+
+type StudentNotification = {
+  id: string
+  key: keyof NotificationPrefs
+  icon: LucideIcon
+  chip: ChipKey
+  title: string
+  body: string
+  when: string
+  sessionId: string
+}
 
 function ToggleRow({
   label,
@@ -110,8 +121,11 @@ function ToggleRow({
 
 export function StudentAccountScreen({
   profile,
+  profileError,
   onUpdateProfile,
+  onUpdatePhoto,
   sessions,
+  tutors,
   favorites,
   onToggleFavorite,
   cards,
@@ -126,8 +140,11 @@ export function StudentAccountScreen({
   onTabSelect,
 }: {
   profile: StudentProfileData
-  onUpdateProfile: (patch: Partial<StudentProfileData>) => void
+  profileError?: string | null
+  onUpdateProfile: (patch: Partial<StudentProfileData>) => Promise<void>
+  onUpdatePhoto: (file: File) => Promise<string | undefined>
   sessions: ClassSession[]
+  tutors: TutorData[]
   favorites: string[]
   onToggleFavorite: (tutorId: string) => void
   cards: SavedCardItem[]
@@ -143,13 +160,16 @@ export function StudentAccountScreen({
 }) {
   const [subStack, setSubStack] = useState<AccountSubscreen[]>(['home'])
   const [toast, setToast] = useState<string | null>(null)
+  const [photoError, setPhotoError] = useState<string | null>(null)
+  const [isSavingPhoto, setIsSavingPhoto] = useState(false)
 
   // Estado local de Editar perfil
   const [draftName, setDraftName] = useState(profile.name)
-  const [draftCareer, setDraftCareer] = useState(profile.career)
-  const [draftMode, setDraftMode] = useState<PreferredMode>(profile.preferredMode)
-  const [draftZone, setDraftZone] = useState(profile.zone)
+  const [draftCareer, setDraftCareer] = useState(profile.career ?? '')
+  const [draftMode, setDraftMode] = useState<PreferredMode>(profile.preferredMode ?? 'Presencial y en línea')
+  const [draftZone, setDraftZone] = useState(profile.zone ?? '')
   const [editError, setEditError] = useState<string | null>(null)
+  const [isSavingProfile, setIsSavingProfile] = useState(false)
 
   // Estado local de Agregar tarjeta
   const [addingCard, setAddingCard] = useState(false)
@@ -170,9 +190,9 @@ export function StudentAccountScreen({
     setToast(null)
     if (next === 'edit') {
       setDraftName(profile.name)
-      setDraftCareer(profile.career)
-      setDraftMode(profile.preferredMode)
-      setDraftZone(profile.zone)
+      setDraftCareer(profile.career ?? '')
+      setDraftMode(profile.preferredMode ?? 'Presencial y en línea')
+      setDraftZone(profile.zone ?? '')
       setEditError(null)
     }
     setSubStack((prev) => [...prev, next])
@@ -187,7 +207,7 @@ export function StudentAccountScreen({
   const myTutors = useMemo(() => {
     const byTutor = new Map<string, { tutor: TutorData; count: number; lastSubject: string }>()
     for (const s of sessions) {
-      const catalogTutor = TUTOR_CATALOG.find((t) => t.id === s.tutorId)
+      const catalogTutor = tutors.find((t) => t.id === s.tutorId)
       if (!catalogTutor) continue
       const prev = byTutor.get(s.tutorId)
       if (prev) {
@@ -201,73 +221,14 @@ export function StudentAccountScreen({
       }
     }
     return Array.from(byTutor.values()).sort((a, b) => b.count - a.count)
-  }, [sessions])
+  }, [sessions, tutors])
 
   const favoriteTutors = useMemo(
-    () => TUTOR_CATALOG.filter((t) => favorites.includes(t.id)),
-    [favorites],
+    () => tutors.filter((t) => favorites.includes(t.id)),
+    [favorites, tutors],
   )
 
-  const notificationItems = useMemo(
-    () => [
-      {
-        id: 'NOT-01',
-        key: 'bookingConfirmed' as const,
-        icon: CheckCircle2,
-        tone: 'ok' as const,
-        chip: 'Confirmada' as const,
-        title: 'Reserva confirmada',
-        body: 'Tu clase RES-1001 de Matemáticas con Carlos Chan quedó confirmada para hoy lunes 23 de noviembre a las 4:00 PM.',
-        when: 'Hoy · 10:15 AM (UTC-6)',
-        sessionId: 'RES-1001',
-      },
-      {
-        id: 'NOT-02',
-        key: 'reminder24h' as const,
-        icon: CalendarDays,
-        tone: 'info' as const,
-        chip: 'Confirmada' as const,
-        title: 'Recordatorio 24 h antes',
-        body: 'Mañana martes 24 de noviembre a las 4:00 PM tienes Matemáticas presencial con Carlos Chan en Biblioteca central.',
-        when: 'Hoy · 4:00 PM (UTC-6)',
-        sessionId: 'RES-1002',
-      },
-      {
-        id: 'NOT-03',
-        key: 'reminder1h' as const,
-        icon: Clock,
-        tone: 'info' as const,
-        chip: 'Confirmada' as const,
-        title: 'Recordatorio 1 h antes',
-        body: 'Falta 1 hora para tu sesión RES-1001 con Carlos Chan. Prepara tu enlace de videollamada.',
-        when: 'Hoy · 3:00 PM (UTC-6)',
-        sessionId: 'RES-1001',
-      },
-      {
-        id: 'NOT-04',
-        key: 'rescheduleProposed' as const,
-        icon: CalendarClock,
-        tone: 'warn' as const,
-        chip: 'Reprogramación propuesta' as const,
-        title: 'Reprogramación propuesta',
-        body: 'Carlos Chan propuso mover la clase RES-1003 de Física al jueves 26 de noviembre a las 6:00 PM.',
-        when: 'Hoy · 12:40 PM (UTC-6)',
-        sessionId: 'RES-1003',
-      },
-      {
-        id: 'NOT-05',
-        key: 'refundIssued' as const,
-        icon: Undo2,
-        tone: 'info' as const,
-        chip: 'Reembolsado' as const,
-        title: 'Reembolso aplicado',
-        body: 'Se reembolsaron $275.00 MXN de la clase RES-0999 directamente a tu tarjeta Visa •••• 4242.',
-        when: 'Hoy · 11:20 AM (UTC-6)',
-        sessionId: 'RES-0999',
-      },
-    ],
-    [],
-  )
+  const notificationItems: StudentNotification[] = []
 
   const visibleNotifications = notificationItems.filter((item) => notifPrefs[item.key])
 
@@ -297,6 +258,11 @@ export function StudentAccountScreen({
 
       <div className="flex-1 overflow-y-auto bg-g50 p-4">
         <div className="flex flex-col gap-3.5">
+        {(sub === 'home' || sub === 'edit') && profileError && (
+          <p role="alert" className="rounded-btn border border-err bg-err-bg p-3 text-[14px] font-semibold text-err">
+            {profileError}
+          </p>
+        )}
           {toast && (
             <div
               role="status"
@@ -322,17 +288,19 @@ export function StudentAccountScreen({
             <>
               <section className="rounded-card border border-g200 bg-white p-4 shadow-sm">
                 <div className="flex items-center gap-3.5">
-                  <img
-                    src={profile.photo}
-                    alt={`Foto de ${profile.name}`}
-                    className="size-16 shrink-0 rounded-full bg-g200 object-cover"
-                  />
+                  {profile.photo ? (
+                    <img src={profile.photo} alt={`Foto de ${profile.name}`} className="size-16 shrink-0 rounded-full bg-g200 object-cover" />
+                  ) : (
+                    <span aria-label={`Sin foto de ${profile.name}`} className="grid size-16 shrink-0 place-items-center rounded-full bg-g200 text-[18px] font-bold text-g700">
+                      {profile.name.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase()}
+                    </span>
+                  )}
                   <div className="min-w-0 flex-1">
                     <span className="text-[12px] font-semibold text-g600">Alumno · {profile.id}</span>
                     <h1 className="truncate text-[20px] font-bold">{profile.name}</h1>
                     <p className="flex items-center gap-1.5 text-[14px] text-g700">
                       <GraduationCap size={16} className="shrink-0" aria-hidden />
-                      {profile.career}
+                      {profile.career ?? 'Sin completar'}
                     </p>
                   </div>
                 </div>
@@ -342,14 +310,14 @@ export function StudentAccountScreen({
                     <dt className="font-semibold text-g600">Modalidad preferida</dt>
                     <dd className="mt-0.5 flex items-center gap-1.5 text-[14px] font-bold text-ink">
                       <ModeIcon size={15} className="shrink-0" aria-hidden />
-                      <span className="truncate">{profile.preferredMode}</span>
+                      <span className="truncate">{profile.preferredMode ?? 'Sin completar'}</span>
                     </dd>
                   </div>
                   <div className="rounded-btn bg-g100 p-2.5">
                     <dt className="font-semibold text-g600">Zona</dt>
                     <dd className="mt-0.5 flex items-center gap-1.5 text-[14px] font-bold text-ink">
                       <MapPin size={15} className="shrink-0" aria-hidden />
-                      <span className="truncate">{profile.zone}</span>
+                      <span className="truncate">{profile.zone ?? 'Sin completar'}</span>
                     </dd>
                   </div>
                 </dl>
@@ -428,11 +396,13 @@ export function StudentAccountScreen({
           {sub === 'edit' && (
             <section className="flex flex-col gap-3.5 rounded-card border border-g200 bg-white p-4">
               <div className="flex items-center gap-3.5 border-b border-g200 pb-3.5">
-                <img
-                  src={profile.photo}
-                  alt={`Foto de ${profile.name}`}
-                  className="size-16 shrink-0 rounded-full bg-g200 object-cover"
-                />
+                {profile.photo ? (
+                  <img src={profile.photo} alt={`Foto de ${profile.name}`} className="size-16 shrink-0 rounded-full bg-g200 object-cover" />
+                ) : (
+                  <span aria-label={`Sin foto de ${profile.name}`} className="grid size-16 shrink-0 place-items-center rounded-full bg-g200 text-[18px] font-bold text-g700">
+                    {profile.name.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase()}
+                  </span>
+                )}
                 <label
                   htmlFor="student-photo-upload"
                   className="inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-btn border-2 border-ink bg-white px-3.5 text-[14px] font-semibold text-ink hover:bg-g100"
@@ -441,15 +411,31 @@ export function StudentAccountScreen({
                   <input
                     id="student-photo-upload"
                     type="file"
-                    accept="image/*"
+                    accept="image/jpeg,image/png,image/webp"
                     className="sr-only"
-                    onChange={(e) => {
-                      if (e.target.files?.[0]) {
+                    disabled={isSavingPhoto}
+                    onChange={async (e) => {
+                      const input = e.currentTarget
+                      const file = input.files?.[0]
+                      if (!file) return
+                      setIsSavingPhoto(true)
+                      setPhotoError(null)
+                      setToast(null)
+                      try {
+                        const warning = await onUpdatePhoto(file)
                         setToast('Foto actualizada correctamente.')
+                        if (warning) setPhotoError(warning)
+                      } catch (error) {
+                        setPhotoError(error instanceof Error ? error.message : 'No se pudo actualizar la foto.')
+                      } finally {
+                        input.value = ''
+                        setIsSavingPhoto(false)
                       }
                     }}
                   />
                 </label>
+                {isSavingPhoto && <p role="status" className="text-[13px] font-semibold text-g600">Actualizando foto…</p>}
+                {photoError && <p role="alert" className="text-[13px] font-semibold text-err">{photoError}</p>}
               </div>
 
               <div className="flex flex-col gap-1">
@@ -516,6 +502,11 @@ export function StudentAccountScreen({
                       </button>
                     )
                   })}
+                  {visibleNotifications.length === 0 && (
+                    <p className="rounded-card border border-dashed border-g300 bg-white p-5 text-center text-g600">
+                      No tienes notificaciones todavía.
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -529,20 +520,29 @@ export function StudentAccountScreen({
               <div className="flex flex-col gap-2 pt-1">
                 <Button
                   full
-                  onClick={() => {
-                    if (!draftName.trim() || !draftCareer.trim()) {
-                      setEditError('Escribe tu nombre completo y tu carrera.')
+                  onClick={async () => {
+                    if (!draftName.trim() || !draftCareer.trim() || !draftZone.trim()) {
+                      setEditError('Escribe tu nombre, carrera y zona.')
                       return
                     }
-                    onUpdateProfile({
-                      name: draftName.trim(),
-                      career: draftCareer.trim(),
-                      preferredMode: draftMode,
-                      zone: draftZone.trim() || 'Mérida, zona norte',
-                    })
-                    goSubBack()
-                    setToast('Perfil actualizado.')
+                    setIsSavingProfile(true)
+                    setEditError(null)
+                    try {
+                      await onUpdateProfile({
+                        name: draftName.trim(),
+                        career: draftCareer.trim(),
+                        preferredMode: draftMode,
+                        zone: draftZone.trim(),
+                      })
+                      goSubBack()
+                      setToast('Perfil actualizado.')
+                    } catch (error) {
+                      setEditError(error instanceof Error ? error.message : 'No se pudo guardar el perfil.')
+                    } finally {
+                      setIsSavingProfile(false)
+                    }
                   }}
+                  loading={isSavingProfile}
                 >
                   Guardar cambios
                 </Button>

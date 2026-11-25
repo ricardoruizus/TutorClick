@@ -5,7 +5,6 @@ import { StudentApp } from '../screens/alumno/student-app'
 import { TutorApp } from '../screens/tutor/tutor-app'
 import { TutorOnboarding } from '../screens/tutor/tutor-experience'
 import { AdminApp } from '../screens/admin/admin-app'
-import { INITIAL_SESSIONS, INITIAL_THREADS, INITIAL_TUTOR_BLOCKS } from '../data/mock'
 import {
   initializeAuth,
   register,
@@ -15,14 +14,23 @@ import {
   type PortalPath,
 } from '../services/auth'
 import {
-  applyRecurringAvailabilityRule,
   toggleAvailabilityBlock,
   updateAvailabilityBlock,
 } from '../services/calendario'
-import { appendConversationMessage, markConversationRead } from '../services/mensajes'
+import {
+  ensureConversation,
+  listMyConversations,
+  markConversationRead,
+  sendConversationMessage,
+  subscribeToMyMessages,
+  type EnsureThreadMeta,
+  type SendMessagePayload,
+} from '../services/mensajes'
+import { subscribeToMyBookings } from '../services/agenda'
+import { AppShell } from '../components/ui/app-shell'
+import type { RealtimeChannel } from '@supabase/supabase-js'
 import type {
   AvailabilityBlock,
-  ClassMode,
   ClassSession,
   ConversationThread,
   UserRole,
@@ -55,9 +63,8 @@ export const ROLE_SCREEN_ROUTES: readonly ScreenRouteDescriptor[] = [
   { role: 'Alumno', screen: 'Registro de Alumno', route: '/', internalId: 'register-student' },
   { role: 'Alumno', screen: 'Buscar Tutores (lista, mapa y filtros)', route: '/', internalId: 'search' },
   { role: 'Alumno', screen: 'Perfil público del Tutor', route: '/', internalId: 'profile' },
-  { role: 'Alumno', screen: 'Reservar clase (única, serie o paquete)', route: '/', internalId: 'booking' },
-  { role: 'Alumno', screen: 'Confirmación y pago protegido', route: '/', internalId: 'checkout' },
-  { role: 'Alumno', screen: 'Clase confirmada', route: '/', internalId: 'confirmed' },
+  { role: 'Alumno', screen: 'Solicitar una clase individual', route: '/', internalId: 'booking' },
+  { role: 'Alumno', screen: 'Solicitud pendiente de confirmación (sin cobro)', route: '/', internalId: 'request-sent' },
   { role: 'Alumno', screen: 'Calendario e historial del Alumno', route: '/', internalId: 'calendar' },
   { role: 'Alumno', screen: 'Detalle de clase (reprogramar, cancelar, calificar, reportar)', route: '/', internalId: 'class-detail' },
   { role: 'Alumno', screen: 'Mensajes y conversación', route: '/', internalId: 'messages / conversation' },
@@ -123,15 +130,104 @@ export function AppRouter() {
   const session = useAuthSession()
   const authInitialization = useAuthInitialization()
   const [entryView, setEntryView] = useState<EntryView>(() => initialEntryFromRoute(parseLocation()))
-  const [studentAccountId, setStudentAccountId] = useState<'USR-0001' | 'USR-0099'>('USR-0001')
   const [tutorOnboardingComplete, setTutorOnboardingComplete] = useState(false)
-  const [sessions, setSessions] = useState<ClassSession[]>(INITIAL_SESSIONS)
-  const [tutorBlocks, setTutorBlocks] = useState<AvailabilityBlock[]>(INITIAL_TUTOR_BLOCKS)
-  const [threads, setThreads] = useState<ConversationThread[]>(INITIAL_THREADS)
+  const [sessions, setSessions] = useState<ClassSession[]>([])
+  const [tutorBlocks, setTutorBlocks] = useState<AvailabilityBlock[]>([])
+  const [threads, setThreads] = useState<ConversationThread[]>([])
+  const [threadsLoading, setThreadsLoading] = useState(false)
+  const [threadsError, setThreadsError] = useState<string | null>(null)
+  const [realtimeLive, setRealtimeLive] = useState(false)
+  const [bookingsTick, setBookingsTick] = useState(0)
 
   useEffect(() => {
     initializeAuth()
   }, [])
+
+  useEffect(() => {
+    if (!session || session.role === 'admin') {
+      setThreads([])
+      setThreadsError(null)
+      setThreadsLoading(false)
+      return
+    }
+
+    let active = true
+    setThreadsLoading(true)
+    setThreadsError(null)
+    void listMyConversations()
+      .then((items) => {
+        if (active) setThreads(items)
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setThreadsError(error instanceof Error ? error.message : 'No se pudieron cargar las conversaciones.')
+        }
+      })
+      .finally(() => {
+        if (active) setThreadsLoading(false)
+      })
+
+    return () => {
+      active = false
+    }
+  }, [session?.id, session?.role])
+
+  // Tiempo real: una sola suscripción mientras haya sesión (no admin). Cuando
+  // llega un mensaje nuevo se refresca la lista con un pequeño debounce para
+  // no recargar varias veces seguidas. Si Realtime falla, el refresco manual
+  // al entrar a Mensajes sigue funcionando como respaldo.
+  useEffect(() => {
+    if (!session || session.role === 'admin') {
+      setRealtimeLive(false)
+      return
+    }
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let messagesChannel: RealtimeChannel | undefined
+    let bookingsChannel: RealtimeChannel | undefined
+
+    const scheduleThreadsRefresh = () => {
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => {
+        void listMyConversations()
+          .then((items) => {
+            if (!cancelled) {
+              setThreads(items)
+              setThreadsError(null)
+            }
+          })
+          .catch(() => {
+            // Sin conexión o error: se conserva la lista actual y el refresco manual.
+          })
+      }, 400)
+    }
+    const scheduleBookingsRefresh = () => {
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => {
+        if (!cancelled) setBookingsTick((value) => value + 1)
+      }, 400)
+    }
+
+    try {
+      messagesChannel = subscribeToMyMessages(scheduleThreadsRefresh)
+      messagesChannel.subscribe((status) => {
+        if (!cancelled && status === 'SUBSCRIBED') setRealtimeLive(true)
+      })
+      bookingsChannel = subscribeToMyBookings(scheduleBookingsRefresh)
+    } catch {
+      // Realtime no disponible (por ejemplo, sin la migración aplicada):
+      // la app sigue funcionando con el refresco manual.
+      setRealtimeLive(false)
+    }
+
+    return () => {
+      cancelled = true
+      if (timer) clearTimeout(timer)
+      void messagesChannel?.unsubscribe()
+      void bookingsChannel?.unsubscribe()
+      setRealtimeLive(false)
+    }
+  }, [session?.id, session?.role])
 
   useEffect(() => {
     const onLocationChange = () => {
@@ -180,10 +276,6 @@ export function AppRouter() {
     })
   }
 
-  function handleAddSession(nextSession: ClassSession) {
-    setSessions((prev) => [nextSession, ...prev])
-  }
-
   function handleUpdateSession(id: string, patch: Partial<ClassSession>) {
     setSessions((prev) => prev.map((item) => (item.id === id ? { ...item, ...patch } : item)))
   }
@@ -196,71 +288,75 @@ export function AppRouter() {
     setTutorBlocks((prev) => updateAvailabilityBlock(prev, blockId, patch))
   }
 
-  function handleApplyRecurringRule(rule: {
-    days: number[]
-    start: string
-    end: string
-    mode: ClassMode
-  }) {
-    setTutorBlocks((prev) => applyRecurringAvailabilityRule(prev, rule, 'USR-0002'))
+  async function refreshThreads(): Promise<void> {
+    const items = await listMyConversations()
+    setThreads(items)
+    setThreadsError(null)
   }
 
-  function handleMarkThreadRead(threadId: string, role: UserRole) {
-    setThreads((prev) => markConversationRead(prev, threadId, role))
-  }
-
-  function handleSendMessage(
-    threadId: string,
-    role: UserRole,
-    payload: { text: string; attachmentName?: string },
-  ) {
-    setThreads((prev) => appendConversationMessage(prev, threadId, role, payload))
-  }
-
-  function handleEnsureThread(meta: {
-    studentId: string
-    studentName: string
-    tutorId: string
-    tutorName: string
-    tutorPhoto: string
-    subject: string
-    sessionId: string
-  }): string {
-    const existing = threads.find(
-      (t) => t.studentId === meta.studentId && t.tutorId === meta.tutorId,
-    )
-    if (existing) {
-      if (meta.sessionId && existing.sessionId !== meta.sessionId) {
-        setThreads((prev) =>
-          prev.map((t) => (t.id === existing.id ? { ...t, sessionId: meta.sessionId } : t)),
-        )
+  async function handleMarkThreadRead(threadId: string, role: UserRole): Promise<void> {
+    await markConversationRead(threadId)
+    setThreads((previous) => previous.map((thread) => {
+      if (thread.id !== threadId) return thread
+      return {
+        ...thread,
+        unreadForStudent: role === 'alumno' ? 0 : thread.unreadForStudent,
+        unreadForTutor: role === 'tutor' ? 0 : thread.unreadForTutor,
+        messages: thread.messages.map((message) =>
+          message.sender !== role ? { ...message, read: true } : message,
+        ),
       }
-      return existing.id
+    }))
+    try {
+      await refreshThreads()
+    } catch (error) {
+      setThreadsError(error instanceof Error
+        ? `La conversación se marcó como leída, pero no se pudo actualizar: ${error.message}`
+        : 'La conversación se marcó como leída, pero no se pudo actualizar.')
     }
-    const newId = `CONV-${Date.now()}`
-    const created: ConversationThread = {
-      id: newId,
-      studentId: meta.studentId,
-      studentName: meta.studentName,
-      tutorId: meta.tutorId,
-      tutorName: meta.tutorName,
-      tutorPhoto: meta.tutorPhoto,
-      subject: meta.subject,
-      sessionId: meta.sessionId,
-      unreadForStudent: 0,
-      unreadForTutor: 0,
-      messages: [
-        {
-          id: `MSG-INIT-${Date.now()}`,
-          sender: 'tutor',
-          text: `Hola ${meta.studentName.split(' ')[0]}, escríbeme por aquí cualquier duda sobre la sesión de ${meta.subject}.`,
-          time: '3:50 PM',
-          read: true,
-        },
-      ],
+  }
+
+  async function handleSendMessage(
+    threadId: string,
+    payload: SendMessagePayload,
+  ): Promise<void> {
+    await sendConversationMessage(threadId, payload)
+    try {
+      await refreshThreads()
+    } catch (error) {
+      setThreadsError(error instanceof Error
+        ? `El mensaje se envió, pero no se pudo actualizar la conversación: ${error.message}`
+        : 'El mensaje se envió, pero no se pudo actualizar la conversación.')
     }
-    setThreads((prev) => [created, ...prev])
-    return newId
+  }
+
+  async function handleEnsureThread(meta: EnsureThreadMeta): Promise<string> {
+    const conversationId = await ensureConversation(meta)
+    try {
+      await refreshThreads()
+    } catch (error) {
+      setThreadsError(error instanceof Error
+        ? `La conversación se creó, pero no se pudo actualizar la lista: ${error.message}`
+        : 'La conversación se creó, pero no se pudo actualizar la lista.')
+      setThreads((previous) => {
+        if (previous.some((thread) => thread.id === conversationId)) return previous
+        const fallbackThread: ConversationThread = {
+          id: conversationId,
+          studentId: meta.studentId,
+          studentName: meta.studentName,
+          tutorId: meta.tutorId,
+          tutorName: meta.tutorName,
+          tutorPhoto: meta.tutorPhoto,
+          subject: meta.subject,
+          sessionId: meta.sessionId,
+          unreadForStudent: 0,
+          unreadForTutor: 0,
+          messages: [],
+        }
+        return [fallbackThread, ...previous]
+      })
+    }
+    return conversationId
   }
 
   if (!authInitialization.initialized) {
@@ -315,23 +411,27 @@ export function AppRouter() {
   }
 
   return (
-    <div className="flex min-h-dvh w-full items-center justify-center bg-white min-[500px]:bg-g100 min-[500px]:px-4 min-[500px]:py-6">
-      <main
-        aria-label={session?.role === 'tutor' ? 'Aplicación móvil del Tutor' : 'Aplicación móvil del Alumno'}
-        className="h-dvh w-full min-[500px]:h-auto min-[500px]:w-auto"
-      >
+    <div className="flex min-h-dvh w-full justify-center bg-white md:bg-g100 md:px-4 md:py-6">
+      <AppShell label={session?.role === 'tutor' ? 'Aplicación del Tutor' : 'Aplicación del Alumno'}>
         {session?.role === 'alumno' ? (
           <StudentApp
-            key={studentAccountId}
+            key={session.id}
             sessions={sessions}
             tutorBlocks={tutorBlocks}
             threads={threads}
-            initialStudentId={studentAccountId}
+            accountId={session.id}
+            accountName={session.fullName}
+            accountEmail={session.email}
+            initialStudentId={session.id}
             initialRoute="search"
-            onAddSession={handleAddSession}
             onUpdateSession={handleUpdateSession}
+            threadsError={threadsError}
+            threadsLoading={threadsLoading}
+            realtimeLive={realtimeLive}
+            bookingsTick={bookingsTick}
+            onRefreshThreads={refreshThreads}
             onMarkThreadRead={(id) => handleMarkThreadRead(id, 'alumno')}
-            onSendMessage={(id, payload) => handleSendMessage(id, 'alumno', payload)}
+            onSendMessage={(id, payload) => handleSendMessage(id, payload)}
             onEnsureThread={handleEnsureThread}
             onLogoutToLogin={() => openLoginScreen('alumno')}
           />
@@ -340,20 +440,26 @@ export function AppRouter() {
             sessions={sessions}
             tutorBlocks={tutorBlocks}
             threads={threads}
+            accountId={session.id}
+            accountName={session.fullName}
             onboardingComplete={tutorOnboardingComplete}
             onOnboardingComplete={() => setTutorOnboardingComplete(true)}
             onTutorLogout={() => setTutorOnboardingComplete(false)}
             onLogoutToLogin={() => openLoginScreen('alumno')}
             onToggleBlock={handleToggleBlock}
             onUpdateBlock={handleUpdateBlock}
-            onApplyRecurringRule={handleApplyRecurringRule}
             onUpdateSession={handleUpdateSession}
+            threadsError={threadsError}
+            threadsLoading={threadsLoading}
+            realtimeLive={realtimeLive}
+            bookingsTick={bookingsTick}
+            onRefreshThreads={refreshThreads}
             onMarkThreadRead={(id) => handleMarkThreadRead(id, 'tutor')}
-            onSendMessage={(id, payload) => handleSendMessage(id, 'tutor', payload)}
+            onSendMessage={(id, payload) => handleSendMessage(id, payload)}
             onEnsureThread={handleEnsureThread}
           />
         ) : (
-          <div className="relative h-dvh w-full overflow-hidden bg-white min-[500px]:h-[844px] min-[500px]:w-[390px] min-[500px]:max-w-full min-[500px]:rounded-[28px] min-[500px]:border-4 min-[500px]:border-ink min-[500px]:shadow-xl">
+          <div className="flex h-full w-full flex-col overflow-hidden bg-white">
             {entryView.screen === 'welcome' && (
               <Welcome
                 embedded
@@ -374,10 +480,7 @@ export function AppRouter() {
                   syncPath('/')
                   setEntryView({ screen: 'welcome' })
                 }}
-                onSuccess={(loggedRole) => {
-                  if (loggedRole === 'alumno') {
-                    setStudentAccountId('USR-0001')
-                  }
+                onSuccess={() => {
                   syncPath('/')
                 }}
                 onAdminAccess={(draft) => openAdminAccess(draft)}
@@ -420,10 +523,12 @@ export function AppRouter() {
                 onBack={() =>
                   setEntryView({ screen: 'register-role', role: 'alumno', nonce: Date.now() })
                 }
-                onSuccess={async ({ fullName, email, password }) => {
-                  const result = await register('alumno', email, password, fullName)
+                onSuccess={async ({ fullName, email, password, career, preferredMode }) => {
+                  const result = await register('alumno', email, password, fullName, {
+                    career,
+                    preferredMode,
+                  })
                   if (result.ok && !result.emailConfirmationRequired) {
-                    setStudentAccountId('USR-0099')
                     syncPath('/')
                   }
                   return result
@@ -435,8 +540,8 @@ export function AppRouter() {
                 onBack={() =>
                   setEntryView({ screen: 'register-role', role: 'tutor', nonce: Date.now() })
                 }
-                onCreateAccount={({ fullName, email, password }) =>
-                  register('tutor', email, password, fullName)
+                onCreateAccount={({ fullName, email, password, ...profile }) =>
+                  register('tutor', email, password, fullName, profile)
                 }
                 onComplete={() => {
                   setTutorOnboardingComplete(true)
@@ -446,7 +551,7 @@ export function AppRouter() {
             )}
           </div>
         )}
-      </main>
+      </AppShell>
     </div>
   )
 }

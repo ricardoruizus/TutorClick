@@ -322,7 +322,7 @@ export function Phone({ children, label }: { children: ReactNode; label: string 
   return (
     <figure className="flex flex-col gap-2">
       <figcaption className="text-[12px] font-semibold text-g600">{label}</figcaption>
-      <div className="flex w-[390px] max-w-full flex-col overflow-hidden rounded-[28px] border-4 border-ink bg-white">{children}</div>
+      <div className="flex w-full max-w-3xl flex-col overflow-hidden rounded-card border border-g200 bg-white">{children}</div>
     </figure>
   )
 }

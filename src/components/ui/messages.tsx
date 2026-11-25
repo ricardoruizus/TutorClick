@@ -6,6 +6,7 @@ import {
   CheckCheck,
   ChevronLeft,
   ChevronRight,
+  Download,
   FileText,
   MessageCircle,
   Paperclip,
@@ -15,9 +16,15 @@ import {
   X,
 } from 'lucide-react'
 import { Avatar, BottomNav, Button, StatusChip, TopBar, studentNav, tutorNav } from './ds'
+import { LiveBadge } from './app-shell'
 import { ListState } from './list-state'
 import type { ClassSession, ConversationThread, UserRole } from '../../types'
-import { detectExternalContact } from '../../services/mensajes'
+import {
+  detectExternalContact,
+  formatAttachmentSize,
+  isImageAttachment,
+  type SendMessagePayload,
+} from '../../services/mensajes'
 import { DAY_SHORT_LABELS, formatTimeChip } from '../../data/mock'
 
 const cx = (...values: (string | false | undefined)[]) => values.filter(Boolean).join(' ')
@@ -29,6 +36,9 @@ export function MessagesListScreen({
   threads,
   sessions,
   onOpenThread,
+  error,
+  isLoading = false,
+  live = false,
   onFindTutor,
   onGoCalendar,
   onBack,
@@ -40,6 +50,10 @@ export function MessagesListScreen({
   threads: ConversationThread[]
   sessions: ClassSession[]
   onOpenThread: (threadId: string) => void
+  error?: string | null
+  isLoading?: boolean
+  /** true cuando la suscripción de tiempo real está activa. */
+  live?: boolean
   onFindTutor?: () => void
   onGoCalendar?: () => void
   onBack?: () => void
@@ -138,6 +152,9 @@ export function MessagesListScreen({
             No leídos ({unreadTotal})
           </button>
         </div>
+        <div className="flex">
+          <LiveBadge live={live} />
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto bg-g50 px-4 py-3.5">
@@ -150,7 +167,7 @@ export function MessagesListScreen({
         </div>
 
         <ListState
-          count={visibleThreads.length}
+          count={isLoading || error ? Math.max(visibleThreads.length, 1) : visibleThreads.length}
           emptyTitle={threads.length === 0 ? 'Aún no tienes mensajes' : filter === 'unread' ? 'No tienes mensajes sin leer' : 'Sin conversaciones para esta búsqueda'}
           emptyDescription={threads.length === 0 ? (role === 'alumno' ? 'Cuando reserves o escribas a un Tutor, tus conversaciones aparecerán aquí.' : 'Las conversaciones con tus Alumnos sobre clases confirmadas aparecerán aquí.') : 'Prueba con otro nombre o muestra todas tus conversaciones.'}
           emptyAction={threads.length === 0 ? (role === 'alumno' ? 'Buscar Tutor' : 'Ir al calendario') : 'Mostrar todos'}
@@ -165,7 +182,16 @@ export function MessagesListScreen({
           }}
           loadingLabel="Cargando conversaciones"
         >
-        {threads.length === 0 ? (
+        {error && (
+          <p role="alert" className="mb-3 rounded-btn border border-err bg-err-bg p-3 text-[13px] font-semibold text-err">
+            {error}
+          </p>
+        )}
+        {isLoading ? (
+          <p role="status" className="rounded-card border border-g200 bg-white p-4 text-[14px] text-g600">
+            Cargando conversaciones guardadas…
+          </p>
+        ) : threads.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-3 rounded-card border border-dashed border-g300 bg-white px-6 py-10 text-center">
             <span className="grid size-16 place-items-center rounded-full bg-g100 text-ink">
               <MessageCircle size={28} aria-hidden />
@@ -210,7 +236,7 @@ export function MessagesListScreen({
             </Button>
           </div>
         ) : (
-          <div className="flex flex-col gap-2.5">
+          <div className="grid gap-2.5 lg:grid-cols-2">
             {visibleThreads.map((thread) => {
               const counterpart = role === 'alumno' ? thread.tutorName : thread.studentName
               const unread = role === 'alumno' ? thread.unreadForStudent : thread.unreadForTutor
@@ -227,7 +253,7 @@ export function MessagesListScreen({
                     unread > 0 ? 'border-ink' : 'border-g200',
                   )}
                 >
-                  {role === 'alumno' ? (
+                  {role === 'alumno' && thread.tutorPhoto ? (
                     <img
                       src={thread.tutorPhoto}
                       alt={`Foto de ${counterpart}`}
@@ -286,31 +312,47 @@ export function ConversationScreen({
   onBack,
   onViewClass,
   onSendMessage,
+  error,
 }: {
   role: UserRole
   thread: ConversationThread
   linkedSession?: ClassSession
   onBack: () => void
   onViewClass: (sessionId: string) => void
-  onSendMessage: (payload: { text: string; attachmentName?: string }) => void
+  onSendMessage: (payload: SendMessagePayload) => Promise<void>
+  error?: string | null
 }) {
   const [draft, setDraft] = useState('')
-  const [attachmentName, setAttachmentName] = useState('')
+  const [attachmentFile, setAttachmentFile] = useState<File | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [sending, setSending] = useState(false)
+  const [uploading, setUploading] = useState(false)
 
   const counterpart = role === 'alumno' ? thread.tutorName : thread.studentName
   const counterpartRoleLabel = role === 'alumno' ? 'Tutor' : 'Alumno'
   const contactCheck = detectExternalContact(draft)
   const showContactWarning = contactCheck.hasPhone || contactCheck.hasExternalLink
 
-  function handleSend() {
+  async function handleSend() {
     const clean = draft.trim()
-    if (!clean && !attachmentName) return
-    onSendMessage({
-      text: clean || 'Archivo adjunto compartido para la sesión.',
-      attachmentName: attachmentName || undefined,
-    })
-    setDraft('')
-    setAttachmentName('')
+    if ((!clean && !attachmentFile) || sending) return
+    setSending(true)
+    setUploading(!!attachmentFile)
+    setActionError(null)
+    try {
+      await onSendMessage({
+        text: clean || 'Archivo adjunto compartido para la sesión.',
+        attachmentName: attachmentFile?.name,
+        attachmentFile: attachmentFile ?? undefined,
+      })
+      setDraft('')
+      setAttachmentFile(null)
+    } catch (sendError) {
+      setActionError(sendError instanceof Error ? sendError.message : 'No se pudo enviar el mensaje.')
+    } finally {
+      setSending(false)
+      setUploading(false)
+    }
   }
 
   return (
@@ -325,7 +367,7 @@ export function ConversationScreen({
         >
           <ChevronLeft size={24} aria-hidden />
         </button>
-        {role === 'alumno' ? (
+        {role === 'alumno' && thread.tutorPhoto ? (
           <img
             src={thread.tutorPhoto}
             alt={`Foto de ${counterpart}`}
@@ -380,7 +422,12 @@ export function ConversationScreen({
 
       {/* Burbujas de conversación */}
       <div className="flex-1 overflow-y-auto bg-g50 px-4 py-3.5">
-        <div className="flex flex-col gap-3">
+        {(error || actionError) && (
+          <p role="alert" className="mb-3 rounded-btn border border-err bg-err-bg p-3 text-[13px] font-semibold text-err md:mx-auto md:w-full md:max-w-3xl">
+            {actionError ?? error}
+          </p>
+        )}
+        <div className="flex flex-col gap-3 md:mx-auto md:w-full md:max-w-3xl">
           {thread.messages.map((msg) => {
             const mine = msg.sender === role
             const msgWarn = detectExternalContact(msg.text)
@@ -401,12 +448,42 @@ export function ConversationScreen({
                   {msg.attachmentName && (
                     <div
                       className={cx(
-                        'mb-1.5 flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[12px] font-semibold',
+                        'mb-1.5 flex flex-col gap-1.5 rounded-lg px-2.5 py-1.5 text-[12px] font-semibold',
                         mine ? 'bg-white/15 text-white' : 'bg-g100 text-ink',
                       )}
                     >
-                      <FileText size={15} className="shrink-0" aria-hidden />
-                      <span className="truncate">{msg.attachmentName}</span>
+                      <span className="flex items-center gap-2">
+                        <FileText size={15} className="shrink-0" aria-hidden />
+                        <span className="truncate">{msg.attachmentName}</span>
+                        {msg.attachmentSize ? (
+                          <span className="shrink-0 font-normal opacity-80">
+                            {formatAttachmentSize(msg.attachmentSize)}
+                          </span>
+                        ) : null}
+                      </span>
+                      {msg.attachmentUrl && isImageAttachment(msg.attachmentType) && (
+                        <a href={msg.attachmentUrl} target="_blank" rel="noreferrer">
+                          <img
+                            src={msg.attachmentUrl}
+                            alt={msg.attachmentName}
+                            className="max-h-48 w-auto max-w-full rounded-lg object-cover"
+                          />
+                        </a>
+                      )}
+                      {msg.attachmentUrl && (
+                        <a
+                          href={msg.attachmentUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 underline underline-offset-2"
+                        >
+                          <Download size={13} aria-hidden />
+                          {isImageAttachment(msg.attachmentType) ? 'Abrir imagen' : 'Descargar archivo'}
+                        </a>
+                      )}
+                      {!msg.attachmentUrl && msg.attachmentPath && (
+                        <span className="font-normal opacity-80">El archivo no se pudo abrir.</span>
+                      )}
                     </div>
                   )}
                   <p className="leading-snug break-words">{msg.text}</p>
@@ -457,16 +534,21 @@ export function ConversationScreen({
       )}
 
       {/* Compositor con adjuntar y enviar */}
-      <div className="shrink-0 border-t border-g200 bg-white px-3 pb-4 pt-2.5">
-        {attachmentName && (
+      <div className="shrink-0 border-t border-g200 bg-white px-3 pb-4 pt-2.5 md:mx-auto md:w-full md:max-w-3xl">
+        {attachmentFile && (
           <div className="mb-2 flex items-center justify-between gap-2 rounded-btn bg-g100 px-3 py-1.5 text-[12px] font-semibold text-ink">
             <span className="flex min-w-0 items-center gap-1.5">
               <Paperclip size={14} className="shrink-0" aria-hidden />
-              <span className="truncate">{attachmentName}</span>
+              <span className="truncate">{attachmentFile.name}</span>
+              <span className="shrink-0 font-normal text-g600">
+                {formatAttachmentSize(attachmentFile.size)}
+              </span>
+              {uploading && <span className="shrink-0">Subiendo…</span>}
             </span>
             <button
               type="button"
-              onClick={() => setAttachmentName('')}
+              onClick={() => setAttachmentFile(null)}
+              disabled={sending}
               aria-label="Quitar archivo adjunto"
               className="grid size-8 shrink-0 place-items-center rounded-full hover:bg-g200"
             >
@@ -486,7 +568,11 @@ export function ConversationScreen({
               id={`chat-attach-${role}`}
               type="file"
               className="sr-only"
-              onChange={(e) => setAttachmentName(e.target.files?.[0]?.name ?? '')}
+              onChange={(e) => {
+                setAttachmentFile(e.target.files?.[0] ?? null)
+                // Permite volver a elegir el mismo archivo después de quitarlo.
+                e.target.value = ''
+              }}
             />
           </label>
 
@@ -497,11 +583,12 @@ export function ConversationScreen({
             <input
               id={`chat-input-${role}`}
               value={draft}
+              maxLength={4000}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault()
-                  handleSend()
+                  void handleSend()
                 }
               }}
               placeholder="Escribe un mensaje…"
@@ -511,13 +598,13 @@ export function ConversationScreen({
 
           <button
             type="button"
-            onClick={handleSend}
-            disabled={!draft.trim() && !attachmentName}
+            onClick={() => void handleSend()}
+            disabled={sending || (!draft.trim() && !attachmentFile)}
             aria-label="Enviar mensaje"
             className="inline-flex min-h-12 min-w-12 shrink-0 items-center justify-center gap-1.5 rounded-btn bg-ink px-3.5 text-[14px] font-semibold text-white hover:bg-g700 disabled:cursor-not-allowed disabled:bg-g200 disabled:text-g500"
           >
             <Send size={18} aria-hidden />
-            <span>Enviar</span>
+            <span>{sending ? (uploading ? 'Subiendo…' : 'Enviando…') : 'Enviar'}</span>
           </button>
         </div>
       </div>

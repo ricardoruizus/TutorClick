@@ -67,7 +67,7 @@ function PhoneFrame({
     <div
       className={cx(
         'relative flex w-full flex-col overflow-hidden bg-white',
-        embedded ? 'h-full' : 'h-[844px] w-[390px] max-w-full rounded-[28px] border-4 border-ink',
+        embedded ? 'h-full' : 'h-dvh w-full md:h-auto md:min-h-[640px] md:max-w-3xl md:rounded-card md:border md:border-g200 md:shadow-sm',
       )}
     >
       <header className="flex h-14 shrink-0 items-center border-b border-g200 bg-white px-2">
@@ -364,6 +364,7 @@ export function ConfirmedScreen({
 export function CheckoutScreen({
   label,
   initialMode = 'form',
+  showSavedCard = false,
   initialClassMode = 'En línea',
   embedded,
   tutor = DEFAULT_TUTOR,
@@ -384,6 +385,7 @@ export function CheckoutScreen({
 }: {
   label?: string
   initialMode?: CheckoutMode
+  showSavedCard?: boolean
   initialClassMode?: ClassMode
   embedded?: boolean
   tutor?: TutorData
@@ -404,7 +406,7 @@ export function CheckoutScreen({
 }) {
   const [screenMode, setScreenMode] = useState<CheckoutMode>(initialMode)
   const [localPayment, setLocalPayment] = useState<SavedPaymentState>({
-    method: initialMode === 'new-card' ? 'new' : 'saved',
+    method: showSavedCard && initialMode !== 'new-card' ? 'saved' : 'new',
     cardNumber: initialMode === 'new-card' ? '4532 8910 2234 ' : '',
     expiry: initialMode === 'new-card' ? '08/29' : '',
     cvv: '',
@@ -628,6 +630,7 @@ export function CheckoutScreen({
           </div>
 
           <div role="radiogroup" aria-label="Selecciona una tarjeta" className="mt-3 flex flex-col gap-2.5">
+            {showSavedCard && (
             <button
               type="button"
               role="radio"
@@ -651,6 +654,7 @@ export function CheckoutScreen({
                 <Circle size={22} className="shrink-0 text-g500" aria-hidden />
               )}
             </button>
+            )}
 
             <button
               type="button"

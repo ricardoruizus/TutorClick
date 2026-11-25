@@ -172,7 +172,7 @@ function ProfileFlow() {
   return (
     <main className="mx-auto max-w-[1700px] px-6 pb-24 pt-12">
       <header className="mb-10">
-        <p className="text-[12px] font-semibold text-g600">Alumno · móvil 390 × 844</p>
+        <p className="text-[12px] font-semibold text-g600">Alumno · responsive</p>
         <h1 className="text-[40px] font-bold leading-tight">Perfil del tutor</h1>
         <p className="max-w-2xl text-[16px] text-g600">Cada perfil se desplaza y los botones quedan fijos abajo. Prueba el favorito, los horarios y el filtro de reseñas.</p>
       </header>
@@ -189,7 +189,7 @@ function BookingFlow() {
   return (
     <main className="mx-auto max-w-[1700px] px-6 pb-24 pt-12">
       <header className="mb-10">
-        <p className="text-[12px] font-semibold text-g600">Alumno · móvil 390 × 844</p>
+        <p className="text-[12px] font-semibold text-g600">Alumno · responsive</p>
         <h1 className="text-[40px] font-bold leading-tight">Reservar clase</h1>
         <p className="max-w-2xl text-[16px] text-g600">
           Selecciona una fecha, horario y modalidad. Cambia a Presencial para elegir un lugar de encuentro.
@@ -207,7 +207,7 @@ function CheckoutFlow() {
   return (
     <main className="mx-auto max-w-[1700px] px-6 pb-24 pt-12">
       <header className="mb-10">
-        <p className="text-[12px] font-semibold text-g600">Alumno · móvil 390 × 844</p>
+        <p className="text-[12px] font-semibold text-g600">Alumno · responsive</p>
         <h1 className="text-[40px] font-bold leading-tight">Confirmación y pago</h1>
         <p className="max-w-2xl text-[16px] text-g600">
           Pago protegido exclusivamente con tarjeta ($250.00 + $25.00 = $275.00 MXN), formulario para agregar tarjeta,
@@ -215,7 +215,7 @@ function CheckoutFlow() {
         </p>
       </header>
       <div className="flex flex-wrap gap-8">
-        <CheckoutScreen label="1. Confirmación con Visa •••• 4242" initialMode="form" />
+        <CheckoutScreen label="1. Confirmación con Visa •••• 4242" initialMode="form" showSavedCard />
         <CheckoutScreen label="2. Agregar tarjeta nueva" initialMode="new-card" initialClassMode="Presencial" />
         <CheckoutScreen label="3. Clase confirmada" initialMode="sent" />
         <CheckoutScreen label="4. Estado: procesando pago" initialMode="processing" />
@@ -229,7 +229,7 @@ function SearchFlow() {
   return (
     <main className="mx-auto max-w-[1700px] px-6 pb-24 pt-12">
       <header className="mb-10">
-        <p className="text-[12px] font-semibold text-g600">Alumno · móvil 390 × 844</p>
+        <p className="text-[12px] font-semibold text-g600">Alumno · responsive</p>
         <h1 className="text-[40px] font-bold leading-tight">Buscar</h1>
         <p className="max-w-2xl text-[16px] text-g600">Cada pantalla es interactiva: busca por materia, alterna Lista y Mapa, guarda favoritos y aplica filtros para llegar al estado sin resultados.</p>
       </header>
@@ -249,7 +249,7 @@ function AuthFlow() {
   return (
     <main className="mx-auto max-w-[1700px] px-6 pb-24 pt-12">
       <header className="mb-10">
-        <p className="text-[12px] font-semibold text-g600">Móvil 390 × 844 · Alumno y Tutor</p>
+        <p className="text-[12px] font-semibold text-g600">Responsive · Alumno y Tutor</p>
         <h1 className="text-[40px] font-bold leading-tight">Acceso y registro</h1>
         <p className="max-w-2xl text-[16px] text-g600">Los campos son interactivos: escribe, muestra la contraseña y envía para ver los errores. No hay selector de rol al iniciar sesión.</p>
       </header>

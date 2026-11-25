@@ -13,7 +13,7 @@ import {
   type AuthRole,
   type LoginAttemptResult,
 } from '../../services/auth'
-import type { RegistrationResult } from '../../services/auth'
+import type { RegistrationResult, StudentRegistrationProfile } from '../../services/auth'
 
 const cx = (...a: (string | false | undefined)[]) => a.filter(Boolean).join(' ')
 const emailOk = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)
@@ -45,11 +45,11 @@ export function Screen({
     <div
       className={cx(
         'flex w-full flex-col overflow-hidden bg-white',
-        embedded ? 'h-full' : 'h-[844px] w-[390px] max-w-full rounded-[28px] border-4 border-ink',
+        embedded ? 'h-full' : 'h-dvh w-full md:h-auto md:min-h-[640px] md:max-w-3xl md:rounded-card md:border md:border-g200 md:shadow-sm',
       )}
     >
-      <div className="flex-1 overflow-y-auto px-6 pb-4 pt-6">{children}</div>
-      {footer && <div className="border-t border-g200 bg-white px-6 pb-6 pt-4">{footer}</div>}
+      <div className="flex-1 overflow-y-auto px-6 pb-4 pt-6 md:mx-auto md:w-full md:max-w-2xl">{children}</div>
+      {footer && <div className="border-t border-g200 bg-white px-6 pb-6 pt-4 md:mx-auto md:w-full md:max-w-2xl">{footer}</div>}
     </div>
   )
   if (embedded) return inner
@@ -175,7 +175,7 @@ export function Welcome({
         <Logo size="lg" />
         <div>
           <h1 className="text-[32px] font-bold leading-tight">Aprende con un tutor cerca de ti</h1>
-          <p className="mt-3 text-[16px] text-g600">Encuentra Tutores en Mérida, presencial o en línea, y paga con seguridad.</p>
+          <p className="mt-3 text-[16px] text-g600">Encuentra Tutores en Mérida, presencial o en línea, y solicita el horario que te convenga.</p>
         </div>
         <ul className="flex flex-col gap-3">
           {[[BookOpen, 'Reserva instantánea en Matemáticas, Física y más'], [ShieldCheck, 'Pagas ahora; el tutor recibe el pago 48 h después de la clase'], [CheckCircle2, 'Tutores verificados con reseñas reales']].map(([I, t]) => {
@@ -570,13 +570,13 @@ export function StudentForm({
   label?: string
   embedded?: boolean
   onBack?: () => void
-  onSuccess?: (details: { fullName: string; email: string; password: string; career: string; mode: string }) => Promise<RegistrationResult | void> | RegistrationResult | void
+  onSuccess?: (details: { fullName: string; email: string; password: string } & StudentRegistrationProfile) => Promise<RegistrationResult | void> | RegistrationResult | void
 }) {
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [pass, setPass] = useState('')
   const [career, setCareer] = useState('')
-  const [mode, setMode] = useState('')
+  const [mode, setMode] = useState<(typeof modes)[number][0] | ''>('')
   const [terms, setTerms] = useState(false)
   const [sub, setSub] = useState(showErrors)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -603,7 +603,7 @@ export function StudentForm({
           email,
           password: pass,
           career,
-          mode,
+          preferredMode: mode === 'Híbrida' ? 'Presencial y en línea' : mode,
         })
         if (result && !result.ok) {
           setServerError(result.message)
@@ -666,9 +666,6 @@ export function StudentForm({
           </div>
           {e.mode && <p id={id('m-m')} role="alert" className="mt-1.5 flex items-center gap-1.5 font-medium text-err"><AlertTriangle size={16} aria-hidden />{e.mode}</p>}
         </fieldset>
-        <p className="rounded-btn border border-info bg-info-bg p-3 text-[13px] text-info">
-          En esta primera integración solo se guardan tu nombre y correo de acceso. La carrera y modalidad aún no se persisten.
-        </p>
         <div>
           <label className="flex min-h-11 cursor-pointer items-start gap-3">
             <input type="checkbox" checked={terms} onChange={(ev) => setTerms(ev.target.checked)} aria-invalid={!!e.terms}

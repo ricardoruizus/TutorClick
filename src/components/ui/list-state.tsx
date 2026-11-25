@@ -7,8 +7,8 @@ type ListStateProps = {
   count: number
   emptyTitle: string
   emptyDescription: string
-  emptyAction: string
-  onEmptyAction: () => void
+  emptyAction?: string
+  onEmptyAction?: () => void
   loadingLabel?: string
   skeletonRows?: number
   className?: string
@@ -92,7 +92,9 @@ export function ListState({
           </span>
           <h2 className="mt-4 text-[18px] font-bold">{emptyTitle}</h2>
           <p className="mt-1 max-w-sm text-g600">{emptyDescription}</p>
-          <Button className="mt-4" onClick={onEmptyAction}>{emptyAction}</Button>
+          {emptyAction && onEmptyAction && (
+            <Button className="mt-4" onClick={onEmptyAction}>{emptyAction}</Button>
+          )}
         </div>
       ) : children}
     </div>

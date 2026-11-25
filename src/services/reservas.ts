@@ -1,6 +1,6 @@
 import type { ClassSession, PropuestaReprogramacion, TutorData } from '../types'
 import { INITIAL_SESSIONS } from '../data/mock/sessions'
-import { SEARCH_TUTORS, TUTOR_CATALOG } from '../data/mock/tutors'
+import { PUBLISHED_TUTORS, SEARCH_TUTORS } from '../data/mock/tutors'
 
 export interface ReservasService {
   listTutors(): TutorData[]
@@ -43,7 +43,7 @@ export function cancelFutureSeriesSessions(
 
 export const mockReservasService: ReservasService = {
   listTutors() {
-    return TUTOR_CATALOG
+    return PUBLISHED_TUTORS
   },
   listMapTutors() {
     return SEARCH_TUTORS

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Login, Recover } from '../alumno/auth'
 import { ConversationScreen, MessagesListScreen } from '../../components/ui/messages'
 import { ClassDetailScreen, UnifiedCalendarScreen, type DetailSheetKind } from '../../components/ui/unified-calendar'
@@ -9,9 +9,31 @@ import {
   TutorOnboarding,
   tutorMainNav,
 } from './tutor-experience'
-import type { AvailabilityBlock, ClassMode, ClassSession, ConversationThread } from '../../types'
+import type {
+  AvailabilityBlock,
+  ClassBookingRecord,
+  ClassMode,
+  ClassNotificationRecord,
+  ClassSession,
+  ConversationThread,
+  TutorWeeklyAvailability,
+} from '../../types'
 import { logout, register } from '../../services/auth'
 import { cancelFutureSeriesSessions } from '../../services/reservas'
+import {
+  deleteTutorWeeklyAvailability,
+  cancelClassBooking,
+  completeClassBooking,
+  listClassRescheduleSlots,
+  listMyClassBookings,
+  listMyClassNotifications,
+  listTutorWeeklyAvailability,
+  markClassNotificationRead,
+  proposeClassReschedule,
+  respondToClassReschedule,
+  respondToClassBooking,
+  saveTutorWeeklyAvailability,
+} from '../../services/agenda'
 
 export type TutorRoute =
   | 'login'
@@ -29,6 +51,9 @@ export function TutorApp({
   sessions,
   tutorBlocks,
   threads,
+  threadsError,
+  threadsLoading,
+  onRefreshThreads,
   accountId,
   accountName,
   startAtOnboarding,
@@ -38,7 +63,6 @@ export function TutorApp({
   onLogoutToLogin,
   onToggleBlock,
   onUpdateBlock,
-  onApplyRecurringRule,
   onUpdateSession,
   onMarkThreadRead,
   onSendMessage,
@@ -47,6 +71,9 @@ export function TutorApp({
   sessions: ClassSession[]
   tutorBlocks: AvailabilityBlock[]
   threads: ConversationThread[]
+  threadsError?: string | null
+  threadsLoading?: boolean
+  onRefreshThreads: () => Promise<void>
   accountId: string
   accountName: string
   startAtOnboarding?: boolean
@@ -56,10 +83,9 @@ export function TutorApp({
   onLogoutToLogin?: () => void
   onToggleBlock: (blockId: string) => void
   onUpdateBlock: (blockId: string, patch: Partial<AvailabilityBlock>) => void
-  onApplyRecurringRule: (rule: { days: number[]; start: string; end: string; mode: ClassMode }) => void
   onUpdateSession: (id: string, patch: Partial<ClassSession>) => void
-  onMarkThreadRead: (threadId: string) => void
-  onSendMessage: (threadId: string, payload: { text: string; attachmentName?: string }) => void
+  onMarkThreadRead: (threadId: string) => Promise<void>
+  onSendMessage: (threadId: string, payload: { text: string; attachmentName?: string }) => Promise<void>
   onEnsureThread: (meta: {
     studentId: string
     studentName: string
@@ -68,7 +94,7 @@ export function TutorApp({
     tutorPhoto: string
     subject: string
     sessionId: string
-  }) => string
+  }) => Promise<string>
 }) {
   const [history, setHistory] = useState<TutorRoute[]>([
     startAtOnboarding ? 'onboarding' : 'home',
@@ -78,12 +104,192 @@ export function TutorApp({
   const [activeSessionId, setActiveSessionId] = useState('')
   const [detailSheet, setDetailSheet] = useState<DetailSheetKind | null>(null)
   const [activeThreadId, setActiveThreadId] = useState('')
+  const [weeklyAvailability, setWeeklyAvailability] = useState<TutorWeeklyAvailability[]>([])
+  const [bookings, setBookings] = useState<ClassBookingRecord[]>([])
+  const [availabilityLoading, setAvailabilityLoading] = useState(true)
+  const [availabilityError, setAvailabilityError] = useState<string | null>(null)
+  const [bookingsError, setBookingsError] = useState<string | null>(null)
+  const [notifications, setNotifications] = useState<ClassNotificationRecord[]>([])
+  const [notificationsError, setNotificationsError] = useState<string | null>(null)
+  const [threadActionError, setThreadActionError] = useState<string | null>(null)
   const current = history[history.length - 1]
   const tutorSessions = sessions.filter((session) => session.tutorId === accountId)
   const tutorThreads = threads.filter((t) => t.tutorId === accountId)
   const blocks = tutorBlocks.filter((block) => block.tutorId === accountId)
   const selectedSession = tutorSessions.find((session) => session.id === activeSessionId) ?? tutorSessions[0]
   const selectedThread = tutorThreads.find((t) => t.id === activeThreadId) ?? tutorThreads[0]
+
+  useEffect(() => {
+    if (current !== 'messages') return
+    void onRefreshThreads()
+      .then(() => setThreadActionError(null))
+      .catch((error: unknown) => {
+        setThreadActionError(error instanceof Error ? error.message : 'No se pudieron actualizar los mensajes.')
+      })
+  }, [current])
+
+  useEffect(() => {
+    let active = true
+    setAvailabilityLoading(true)
+    setAvailabilityError(null)
+    void listTutorWeeklyAvailability(accountId)
+      .then((slots) => {
+        if (active) setWeeklyAvailability(slots)
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setAvailabilityError(
+            error instanceof Error ? error.message : 'No se pudo cargar la disponibilidad semanal.',
+          )
+        }
+      })
+      .finally(() => {
+        if (active) setAvailabilityLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [accountId])
+
+  useEffect(() => {
+    if (current !== 'calendar') return
+    let active = true
+    void listMyClassBookings()
+      .then((items) => {
+        if (!active) return
+        setBookings(items.filter((item) => item.tutorUserId === accountId))
+        setBookingsError(null)
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setBookingsError(error instanceof Error ? error.message : 'No se pudieron cargar las solicitudes.')
+        }
+      })
+    void listMyClassNotifications()
+      .then((items) => {
+        if (!active) return
+        setNotifications(items)
+        setNotificationsError(null)
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setNotificationsError(error instanceof Error ? error.message : 'No se pudieron cargar las notificaciones.')
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [accountId, current])
+
+  async function reloadAvailability() {
+    const slots = await listTutorWeeklyAvailability(accountId)
+    setWeeklyAvailability(slots)
+    setAvailabilityError(null)
+  }
+
+  async function applyAvailabilityRule(rule: {
+    days: number[]
+    start: string
+    end: string
+    mode: ClassMode
+  }) {
+    setAvailabilityLoading(true)
+    setAvailabilityError(null)
+    try {
+      await saveTutorWeeklyAvailability({
+        weekdays: rule.days,
+        startTime: rule.start,
+        endTime: rule.end,
+        mode: rule.mode,
+      })
+      await reloadAvailability()
+    } finally {
+      setAvailabilityLoading(false)
+    }
+  }
+
+  async function removeAvailabilitySlot(slotId: string) {
+    await deleteTutorWeeklyAvailability(slotId)
+    await reloadAvailability()
+  }
+
+  async function handleBookingResponse(
+    bookingId: string,
+    response: Extract<ClassBookingRecord['status'], 'confirmed' | 'rejected'>,
+  ) {
+    await respondToClassBooking(bookingId, response)
+    await refreshClassLifecycleData()
+  }
+
+  async function refreshClassLifecycleData() {
+    const [bookingsResult, notificationsResult] = await Promise.allSettled([
+      listMyClassBookings(),
+      listMyClassNotifications(),
+    ])
+    if (bookingsResult.status === 'fulfilled') {
+      setBookings(bookingsResult.value.filter((item) => item.tutorUserId === accountId))
+      setBookingsError(null)
+    } else {
+      setBookingsError(bookingsResult.reason instanceof Error
+        ? `La acción se completó, pero no se pudo actualizar la lista: ${bookingsResult.reason.message}`
+        : 'La acción se completó, pero no se pudo actualizar la lista.')
+    }
+    if (notificationsResult.status === 'fulfilled') {
+      setNotifications(notificationsResult.value)
+      setNotificationsError(null)
+    } else {
+      setNotificationsError(notificationsResult.reason instanceof Error
+        ? notificationsResult.reason.message
+        : 'No se pudieron actualizar las notificaciones.')
+    }
+  }
+
+  async function handleClassLifecycleAction(action: () => Promise<void>) {
+    await action()
+    await refreshClassLifecycleData()
+  }
+
+  async function handleMarkNotificationRead(notificationId: string) {
+    await markClassNotificationRead(notificationId)
+    setNotifications((currentItems) => currentItems.map((notification) =>
+      notification.id === notificationId
+        ? { ...notification, readAt: new Date().toISOString() }
+        : notification,
+    ))
+  }
+
+  function openConversation(threadId: string) {
+    setActiveThreadId(threadId)
+    push('conversation')
+    setThreadActionError(null)
+    void onMarkThreadRead(threadId).catch((error: unknown) => {
+      setThreadActionError(error instanceof Error ? error.message : 'No se pudo marcar la conversación como leída.')
+    })
+  }
+
+  async function ensureAndOpenConversation(meta: {
+    studentId: string
+    studentName: string
+    tutorId: string
+    tutorName: string
+    tutorPhoto: string
+    subject: string
+    sessionId: string
+  }) {
+    setThreadActionError(null)
+    try {
+      const threadId = await onEnsureThread(meta)
+      setActiveThreadId(threadId)
+      push('conversation')
+      try {
+        await onMarkThreadRead(threadId)
+      } catch (error) {
+        setThreadActionError(error instanceof Error ? error.message : 'No se pudo marcar la conversación como leída.')
+      }
+    } catch (error) {
+      setThreadActionError(error instanceof Error ? error.message : 'No se pudo abrir la conversación.')
+    }
+  }
 
   function push(next: TutorRoute) {
     if (next === current) return
@@ -148,9 +354,32 @@ export function TutorApp({
             role="tutor"
             sessions={tutorSessions}
             tutorBlocks={blocks}
+            weeklyAvailability={weeklyAvailability}
+            bookings={bookings}
+            bookingsError={bookingsError}
+            notifications={notifications}
+            notificationsError={notificationsError}
+            onMarkNotificationRead={handleMarkNotificationRead}
+            availabilityLoading={availabilityLoading}
+            availabilityError={availabilityError}
             onToggleBlock={onToggleBlock}
             onUpdateBlock={onUpdateBlock}
-            onApplyRecurringRule={onApplyRecurringRule}
+            onApplyRecurringRule={applyAvailabilityRule}
+            onDeleteAvailability={removeAvailabilitySlot}
+            onRespondToBooking={handleBookingResponse}
+            onCancelBooking={(bookingId, reason) => handleClassLifecycleAction(
+              () => cancelClassBooking(bookingId, reason),
+            )}
+            onListRescheduleSlots={listClassRescheduleSlots}
+            onProposeReschedule={(input) => handleClassLifecycleAction(
+              () => proposeClassReschedule(input),
+            )}
+            onRespondToReschedule={(bookingId, response) => handleClassLifecycleAction(
+              () => respondToClassReschedule(bookingId, response),
+            )}
+            onCompleteBooking={(bookingId) => handleClassLifecycleAction(
+              () => completeClassBooking(bookingId),
+            )}
             onOpenSession={(id, sh) => {
               setActiveSessionId(id)
               setDetailSheet(sh ?? null)
@@ -170,7 +399,7 @@ export function TutorApp({
             initialSheet={detailSheet}
             onBack={goBack}
             onWriteMessage={() => {
-              const tId = onEnsureThread({
+              void ensureAndOpenConversation({
                 studentId: selectedSession.studentId,
                 studentName: selectedSession.studentName,
                 tutorId: selectedSession.tutorId,
@@ -179,9 +408,6 @@ export function TutorApp({
                 subject: selectedSession.subject,
                 sessionId: selectedSession.id,
               })
-              setActiveThreadId(tId)
-              onMarkThreadRead(tId)
-              push('conversation')
             }}
             onUpdateSession={(patch) => onUpdateSession(selectedSession.id, patch)}
             onCancelFutureSessions={(seriesId, fromIndex) => cancelFutureSeriesSessions(sessions, seriesId, fromIndex, onUpdateSession)}
@@ -216,11 +442,9 @@ export function TutorApp({
             role="tutor"
             threads={tutorThreads}
             sessions={tutorSessions}
-            onOpenThread={(id) => {
-              setActiveThreadId(id)
-              onMarkThreadRead(id)
-              push('conversation')
-            }}
+            error={threadsError ?? threadActionError}
+            isLoading={threadsLoading}
+            onOpenThread={openConversation}
             onGoCalendar={() => handleTabSelect(1)}
             onBack={history.length > 1 ? goBack : undefined}
             onTabSelect={handleTabSelect}
@@ -233,6 +457,7 @@ export function TutorApp({
             role="tutor"
             thread={selectedThread}
             linkedSession={tutorSessions.find((s) => s.id === selectedThread.sessionId)}
+            error={threadsError ?? threadActionError}
             onBack={goBack}
             onViewClass={(sessionId) => {
               const exists = tutorSessions.find((s) => s.id === sessionId)
@@ -256,7 +481,7 @@ export function TutorApp({
             userId={accountId}
             fullName={accountName}
             onMessageStudent={(session) => {
-              const threadId = onEnsureThread({
+              void ensureAndOpenConversation({
                 studentId: session.studentId,
                 studentName: session.studentName,
                 tutorId: session.tutorId,
@@ -265,9 +490,6 @@ export function TutorApp({
                 subject: session.subject,
                 sessionId: session.id,
               })
-              setActiveThreadId(threadId)
-              onMarkThreadRead(threadId)
-              push('conversation')
             }}
             onLogout={() => {
               void logout()

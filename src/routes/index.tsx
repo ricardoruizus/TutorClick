@@ -14,14 +14,18 @@ import {
   type PortalPath,
 } from '../services/auth'
 import {
-  applyRecurringAvailabilityRule,
   toggleAvailabilityBlock,
   updateAvailabilityBlock,
 } from '../services/calendario'
-import { appendConversationMessage, markConversationRead } from '../services/mensajes'
+import {
+  ensureConversation,
+  listMyConversations,
+  markConversationRead,
+  sendConversationMessage,
+  type EnsureThreadMeta,
+} from '../services/mensajes'
 import type {
   AvailabilityBlock,
-  ClassMode,
   ClassSession,
   ConversationThread,
   UserRole,
@@ -54,9 +58,8 @@ export const ROLE_SCREEN_ROUTES: readonly ScreenRouteDescriptor[] = [
   { role: 'Alumno', screen: 'Registro de Alumno', route: '/', internalId: 'register-student' },
   { role: 'Alumno', screen: 'Buscar Tutores (lista, mapa y filtros)', route: '/', internalId: 'search' },
   { role: 'Alumno', screen: 'Perfil público del Tutor', route: '/', internalId: 'profile' },
-  { role: 'Alumno', screen: 'Reservar clase (única, serie o paquete)', route: '/', internalId: 'booking' },
-  { role: 'Alumno', screen: 'Confirmación y pago protegido', route: '/', internalId: 'checkout' },
-  { role: 'Alumno', screen: 'Clase confirmada', route: '/', internalId: 'confirmed' },
+  { role: 'Alumno', screen: 'Solicitar una clase individual', route: '/', internalId: 'booking' },
+  { role: 'Alumno', screen: 'Solicitud pendiente de confirmación (sin cobro)', route: '/', internalId: 'request-sent' },
   { role: 'Alumno', screen: 'Calendario e historial del Alumno', route: '/', internalId: 'calendar' },
   { role: 'Alumno', screen: 'Detalle de clase (reprogramar, cancelar, calificar, reportar)', route: '/', internalId: 'class-detail' },
   { role: 'Alumno', screen: 'Mensajes y conversación', route: '/', internalId: 'messages / conversation' },
@@ -126,10 +129,41 @@ export function AppRouter() {
   const [sessions, setSessions] = useState<ClassSession[]>([])
   const [tutorBlocks, setTutorBlocks] = useState<AvailabilityBlock[]>([])
   const [threads, setThreads] = useState<ConversationThread[]>([])
+  const [threadsLoading, setThreadsLoading] = useState(false)
+  const [threadsError, setThreadsError] = useState<string | null>(null)
 
   useEffect(() => {
     initializeAuth()
   }, [])
+
+  useEffect(() => {
+    if (!session || session.role === 'admin') {
+      setThreads([])
+      setThreadsError(null)
+      setThreadsLoading(false)
+      return
+    }
+
+    let active = true
+    setThreadsLoading(true)
+    setThreadsError(null)
+    void listMyConversations()
+      .then((items) => {
+        if (active) setThreads(items)
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setThreadsError(error instanceof Error ? error.message : 'No se pudieron cargar las conversaciones.')
+        }
+      })
+      .finally(() => {
+        if (active) setThreadsLoading(false)
+      })
+
+    return () => {
+      active = false
+    }
+  }, [session?.id, session?.role])
 
   useEffect(() => {
     const onLocationChange = () => {
@@ -178,10 +212,6 @@ export function AppRouter() {
     })
   }
 
-  function handleAddSession(nextSession: ClassSession) {
-    setSessions((prev) => [nextSession, ...prev])
-  }
-
   function handleUpdateSession(id: string, patch: Partial<ClassSession>) {
     setSessions((prev) => prev.map((item) => (item.id === id ? { ...item, ...patch } : item)))
   }
@@ -194,63 +224,75 @@ export function AppRouter() {
     setTutorBlocks((prev) => updateAvailabilityBlock(prev, blockId, patch))
   }
 
-  function handleApplyRecurringRule(rule: {
-    days: number[]
-    start: string
-    end: string
-    mode: ClassMode
-  }) {
-    setTutorBlocks((prev) => applyRecurringAvailabilityRule(prev, rule, session?.id ?? ''))
+  async function refreshThreads(): Promise<void> {
+    const items = await listMyConversations()
+    setThreads(items)
+    setThreadsError(null)
   }
 
-  function handleMarkThreadRead(threadId: string, role: UserRole) {
-    setThreads((prev) => markConversationRead(prev, threadId, role))
-  }
-
-  function handleSendMessage(
-    threadId: string,
-    role: UserRole,
-    payload: { text: string; attachmentName?: string },
-  ) {
-    setThreads((prev) => appendConversationMessage(prev, threadId, role, payload))
-  }
-
-  function handleEnsureThread(meta: {
-    studentId: string
-    studentName: string
-    tutorId: string
-    tutorName: string
-    tutorPhoto: string
-    subject: string
-    sessionId: string
-  }): string {
-    const existing = threads.find(
-      (t) => t.studentId === meta.studentId && t.tutorId === meta.tutorId,
-    )
-    if (existing) {
-      if (meta.sessionId && existing.sessionId !== meta.sessionId) {
-        setThreads((prev) =>
-          prev.map((t) => (t.id === existing.id ? { ...t, sessionId: meta.sessionId } : t)),
-        )
+  async function handleMarkThreadRead(threadId: string, role: UserRole): Promise<void> {
+    await markConversationRead(threadId)
+    setThreads((previous) => previous.map((thread) => {
+      if (thread.id !== threadId) return thread
+      return {
+        ...thread,
+        unreadForStudent: role === 'alumno' ? 0 : thread.unreadForStudent,
+        unreadForTutor: role === 'tutor' ? 0 : thread.unreadForTutor,
+        messages: thread.messages.map((message) =>
+          message.sender !== role ? { ...message, read: true } : message,
+        ),
       }
-      return existing.id
+    }))
+    try {
+      await refreshThreads()
+    } catch (error) {
+      setThreadsError(error instanceof Error
+        ? `La conversación se marcó como leída, pero no se pudo actualizar: ${error.message}`
+        : 'La conversación se marcó como leída, pero no se pudo actualizar.')
     }
-    const newId = `CONV-${Date.now()}`
-    const created: ConversationThread = {
-      id: newId,
-      studentId: meta.studentId,
-      studentName: meta.studentName,
-      tutorId: meta.tutorId,
-      tutorName: meta.tutorName,
-      tutorPhoto: meta.tutorPhoto,
-      subject: meta.subject,
-      sessionId: meta.sessionId,
-      unreadForStudent: 0,
-      unreadForTutor: 0,
-      messages: [],
+  }
+
+  async function handleSendMessage(
+    threadId: string,
+    payload: { text: string; attachmentName?: string },
+  ): Promise<void> {
+    await sendConversationMessage(threadId, payload)
+    try {
+      await refreshThreads()
+    } catch (error) {
+      setThreadsError(error instanceof Error
+        ? `El mensaje se envió, pero no se pudo actualizar la conversación: ${error.message}`
+        : 'El mensaje se envió, pero no se pudo actualizar la conversación.')
     }
-    setThreads((prev) => [created, ...prev])
-    return newId
+  }
+
+  async function handleEnsureThread(meta: EnsureThreadMeta): Promise<string> {
+    const conversationId = await ensureConversation(meta)
+    try {
+      await refreshThreads()
+    } catch (error) {
+      setThreadsError(error instanceof Error
+        ? `La conversación se creó, pero no se pudo actualizar la lista: ${error.message}`
+        : 'La conversación se creó, pero no se pudo actualizar la lista.')
+      setThreads((previous) => {
+        if (previous.some((thread) => thread.id === conversationId)) return previous
+        const fallbackThread: ConversationThread = {
+          id: conversationId,
+          studentId: meta.studentId,
+          studentName: meta.studentName,
+          tutorId: meta.tutorId,
+          tutorName: meta.tutorName,
+          tutorPhoto: meta.tutorPhoto,
+          subject: meta.subject,
+          sessionId: meta.sessionId,
+          unreadForStudent: 0,
+          unreadForTutor: 0,
+          messages: [],
+        }
+        return [fallbackThread, ...previous]
+      })
+    }
+    return conversationId
   }
 
   if (!authInitialization.initialized) {
@@ -321,10 +363,12 @@ export function AppRouter() {
             accountEmail={session.email}
             initialStudentId={session.id}
             initialRoute="search"
-            onAddSession={handleAddSession}
             onUpdateSession={handleUpdateSession}
+            threadsError={threadsError}
+            threadsLoading={threadsLoading}
+            onRefreshThreads={refreshThreads}
             onMarkThreadRead={(id) => handleMarkThreadRead(id, 'alumno')}
-            onSendMessage={(id, payload) => handleSendMessage(id, 'alumno', payload)}
+            onSendMessage={(id, payload) => handleSendMessage(id, payload)}
             onEnsureThread={handleEnsureThread}
             onLogoutToLogin={() => openLoginScreen('alumno')}
           />
@@ -341,10 +385,12 @@ export function AppRouter() {
             onLogoutToLogin={() => openLoginScreen('alumno')}
             onToggleBlock={handleToggleBlock}
             onUpdateBlock={handleUpdateBlock}
-            onApplyRecurringRule={handleApplyRecurringRule}
             onUpdateSession={handleUpdateSession}
+            threadsError={threadsError}
+            threadsLoading={threadsLoading}
+            onRefreshThreads={refreshThreads}
             onMarkThreadRead={(id) => handleMarkThreadRead(id, 'tutor')}
-            onSendMessage={(id, payload) => handleSendMessage(id, 'tutor', payload)}
+            onSendMessage={(id, payload) => handleSendMessage(id, payload)}
             onEnsureThread={handleEnsureThread}
           />
         ) : (

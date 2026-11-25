@@ -29,6 +29,8 @@ export function MessagesListScreen({
   threads,
   sessions,
   onOpenThread,
+  error,
+  isLoading = false,
   onFindTutor,
   onGoCalendar,
   onBack,
@@ -40,6 +42,8 @@ export function MessagesListScreen({
   threads: ConversationThread[]
   sessions: ClassSession[]
   onOpenThread: (threadId: string) => void
+  error?: string | null
+  isLoading?: boolean
   onFindTutor?: () => void
   onGoCalendar?: () => void
   onBack?: () => void
@@ -150,7 +154,7 @@ export function MessagesListScreen({
         </div>
 
         <ListState
-          count={visibleThreads.length}
+          count={isLoading || error ? Math.max(visibleThreads.length, 1) : visibleThreads.length}
           emptyTitle={threads.length === 0 ? 'Aún no tienes mensajes' : filter === 'unread' ? 'No tienes mensajes sin leer' : 'Sin conversaciones para esta búsqueda'}
           emptyDescription={threads.length === 0 ? (role === 'alumno' ? 'Cuando reserves o escribas a un Tutor, tus conversaciones aparecerán aquí.' : 'Las conversaciones con tus Alumnos sobre clases confirmadas aparecerán aquí.') : 'Prueba con otro nombre o muestra todas tus conversaciones.'}
           emptyAction={threads.length === 0 ? (role === 'alumno' ? 'Buscar Tutor' : 'Ir al calendario') : 'Mostrar todos'}
@@ -165,7 +169,16 @@ export function MessagesListScreen({
           }}
           loadingLabel="Cargando conversaciones"
         >
-        {threads.length === 0 ? (
+        {error && (
+          <p role="alert" className="mb-3 rounded-btn border border-err bg-err-bg p-3 text-[13px] font-semibold text-err">
+            {error}
+          </p>
+        )}
+        {isLoading ? (
+          <p role="status" className="rounded-card border border-g200 bg-white p-4 text-[14px] text-g600">
+            Cargando conversaciones guardadas…
+          </p>
+        ) : threads.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-3 rounded-card border border-dashed border-g300 bg-white px-6 py-10 text-center">
             <span className="grid size-16 place-items-center rounded-full bg-g100 text-ink">
               <MessageCircle size={28} aria-hidden />
@@ -227,7 +240,7 @@ export function MessagesListScreen({
                     unread > 0 ? 'border-ink' : 'border-g200',
                   )}
                 >
-                  {role === 'alumno' ? (
+                  {role === 'alumno' && thread.tutorPhoto ? (
                     <img
                       src={thread.tutorPhoto}
                       alt={`Foto de ${counterpart}`}
@@ -286,31 +299,43 @@ export function ConversationScreen({
   onBack,
   onViewClass,
   onSendMessage,
+  error,
 }: {
   role: UserRole
   thread: ConversationThread
   linkedSession?: ClassSession
   onBack: () => void
   onViewClass: (sessionId: string) => void
-  onSendMessage: (payload: { text: string; attachmentName?: string }) => void
+  onSendMessage: (payload: { text: string; attachmentName?: string }) => Promise<void>
+  error?: string | null
 }) {
   const [draft, setDraft] = useState('')
   const [attachmentName, setAttachmentName] = useState('')
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [sending, setSending] = useState(false)
 
   const counterpart = role === 'alumno' ? thread.tutorName : thread.studentName
   const counterpartRoleLabel = role === 'alumno' ? 'Tutor' : 'Alumno'
   const contactCheck = detectExternalContact(draft)
   const showContactWarning = contactCheck.hasPhone || contactCheck.hasExternalLink
 
-  function handleSend() {
+  async function handleSend() {
     const clean = draft.trim()
-    if (!clean && !attachmentName) return
-    onSendMessage({
-      text: clean || 'Archivo adjunto compartido para la sesión.',
-      attachmentName: attachmentName || undefined,
-    })
-    setDraft('')
-    setAttachmentName('')
+    if ((!clean && !attachmentName) || sending) return
+    setSending(true)
+    setActionError(null)
+    try {
+      await onSendMessage({
+        text: clean || 'Archivo adjunto compartido para la sesión.',
+        attachmentName: attachmentName || undefined,
+      })
+      setDraft('')
+      setAttachmentName('')
+    } catch (sendError) {
+      setActionError(sendError instanceof Error ? sendError.message : 'No se pudo enviar el mensaje.')
+    } finally {
+      setSending(false)
+    }
   }
 
   return (
@@ -325,7 +350,7 @@ export function ConversationScreen({
         >
           <ChevronLeft size={24} aria-hidden />
         </button>
-        {role === 'alumno' ? (
+        {role === 'alumno' && thread.tutorPhoto ? (
           <img
             src={thread.tutorPhoto}
             alt={`Foto de ${counterpart}`}
@@ -380,6 +405,11 @@ export function ConversationScreen({
 
       {/* Burbujas de conversación */}
       <div className="flex-1 overflow-y-auto bg-g50 px-4 py-3.5">
+        {(error || actionError) && (
+          <p role="alert" className="mb-3 rounded-btn border border-err bg-err-bg p-3 text-[13px] font-semibold text-err">
+            {actionError ?? error}
+          </p>
+        )}
         <div className="flex flex-col gap-3">
           {thread.messages.map((msg) => {
             const mine = msg.sender === role
@@ -497,11 +527,12 @@ export function ConversationScreen({
             <input
               id={`chat-input-${role}`}
               value={draft}
+              maxLength={4000}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault()
-                  handleSend()
+                  void handleSend()
                 }
               }}
               placeholder="Escribe un mensaje…"
@@ -511,13 +542,13 @@ export function ConversationScreen({
 
           <button
             type="button"
-            onClick={handleSend}
-            disabled={!draft.trim() && !attachmentName}
+            onClick={() => void handleSend()}
+            disabled={sending || (!draft.trim() && !attachmentName)}
             aria-label="Enviar mensaje"
             className="inline-flex min-h-12 min-w-12 shrink-0 items-center justify-center gap-1.5 rounded-btn bg-ink px-3.5 text-[14px] font-semibold text-white hover:bg-g700 disabled:cursor-not-allowed disabled:bg-g200 disabled:text-g500"
           >
             <Send size={18} aria-hidden />
-            <span>Enviar</span>
+            <span>{sending ? 'Enviando…' : 'Enviar'}</span>
           </button>
         </div>
       </div>

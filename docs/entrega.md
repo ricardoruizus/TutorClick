@@ -42,6 +42,14 @@ La migración `supabase/migrations/20261125043000_persist_tutor_avatars.sql` añ
 
 La migración `supabase/migrations/20261125053000_admin_tutor_credential_review.sql` habilita la bandeja de revisión administrativa: agrega el registro de envío y decisión, permite lectura de expedientes solo a Admin y guarda las aprobaciones o rechazos (con motivo obligatorio). Aplícala desde **SQL Editor**, después de las migraciones anteriores.
 
+La migración `supabase/migrations/20261125063000_publish_verified_tutors.sql` habilita la consulta del catálogo desde el portal Alumno y el acceso a fotos de tutores verificados. El RPC solo devuelve campos públicos de perfiles verificados y completos; aplícala después de la migración de revisión administrativa.
+
+La migración `supabase/migrations/20261125073000_persist_weekly_availability_and_bookings.sql` agrega los horarios semanales recurrentes, las solicitudes individuales de reserva y sus políticas RLS. El RPC de horarios devuelve opciones para los próximos 30 días en `America/Merida`; las solicitudes se guardan como pendientes de confirmación y un índice único impide reservar dos veces la misma hora. Aplícala desde **SQL Editor**, después de `20261125063000_publish_verified_tutors.sql`.
+
+La migración `supabase/migrations/20261125083000_complete_class_booking_lifecycle.sql` completa el ciclo de una clase: cancelación por cualquiera de las dos personas con más de 24 horas de anticipación, propuestas de reprogramación con aceptación o rechazo mutuo, registro de clase completada por el Tutor después de su hora de término y notificaciones persistidas dentro de la app. La hora original permanece reservada hasta que se acepta la propuesta; los horarios propuestos también se apartan mientras esperan respuesta. Aplícala después de `20261125073000_persist_weekly_availability_and_bookings.sql`.
+
+La migración `supabase/migrations/20261125093000_persist_conversations.sql` agrega conversaciones y mensajes persistidos, acceso RLS solo para Alumno y Tutor participantes, envío seguro y marcado de mensajes como leídos. Aplícala después de `20261125083000_complete_class_booking_lifecycle.sql`. En esta versión el nombre del archivo adjunto se guarda como metadato; el archivo binario no se sube a Supabase Storage y la actualización de mensajes no es en tiempo real.
+
 El cliente Supabase está en `src/services/supabase.ts`. La URL y la clave pública se leen de `.env.local`, que no debe subirse al repositorio. La clave `service_role` no debe exponerse al navegador.
 
 El inicio y cierre de sesión, registro de alumnos/tutores y MFA TOTP para administradores usan Supabase Auth. Para desarrollo, configura en Supabase Auth la URL del sitio y la redirección `http://localhost:8443/**` (el puerto por defecto de Vite en este proyecto); reinicia Vite tras cambiar `.env.local`. Si está habilitada la confirmación de correo, el registro termina cuando la persona sigue el enlace recibido.
@@ -56,11 +64,11 @@ where user_id = (
 );
 ```
 
-La autenticación ya es real. Con las migraciones de perfiles y avatares, se guardan en Supabase los datos del perfil del Alumno y del perfil profesional del Tutor, junto con las fotos y los archivos de título y cédula en almacenamiento privado. La migración de revisión conecta la bandeja de credenciales del Admin con esos documentos privados y registra la decisión y el motivo de rechazo. Los datos de búsqueda, reservas, pagos, mensajes y disponibilidad aún no están conectados a la base. La recuperación de contraseña también sigue pendiente de integración.
+La autenticación ya es real. Con las migraciones de perfiles y avatares, se guardan en Supabase los datos del perfil del Alumno y del perfil profesional del Tutor, junto con las fotos y los archivos de título y cédula en almacenamiento privado. La migración de revisión conecta la bandeja de credenciales del Admin con esos documentos privados y registra la decisión y el motivo de rechazo. La búsqueda de Alumnos lista únicamente perfiles profesionales completos y verificados. Con las migraciones `20261125073000` y `20261125083000`, los Tutores publican disponibilidad semanal y los Alumnos envían solicitudes individuales que el Tutor puede confirmar o rechazar; ambas personas pueden cancelar o proponer una reprogramación según las reglas descritas arriba, y el Tutor puede marcar las clases realizadas. Las notificaciones de clases se guardan en Supabase. Con la migración `20261125093000`, conversaciones y mensajes también se guardan en Supabase y solo son accesibles por sus participantes. Estas funciones no procesan pagos. Siguen pendientes la integración de pagos, la recuperación de contraseña, los adjuntos binarios y la actualización de mensajes en tiempo real.
 
 ## Datos de la aplicación
 
-Se retiraron los usuarios, tutores, reservas, mensajes, pagos, notificaciones y movimientos de ejemplo de las pantallas de Alumno, Tutor y Admin. Estas secciones muestran estados vacíos hasta que se conecten a Supabase; los ceros del panel Admin indican que todavía no hay datos integrados, no actividad real. Los perfiles de muestra que permanecen en la galería y el sistema de diseño son únicamente material visual y no se ofrecen en la búsqueda de tutores.
+Se retiraron los usuarios, mensajes, pagos, notificaciones y movimientos de ejemplo de las pantallas de Alumno, Tutor y Admin. La búsqueda consulta los perfiles verificados desde Supabase y muestra estado vacío si todavía no hay perfiles que cumplan los requisitos de publicación. La disponibilidad y las solicitudes de reserva se guardan en Supabase; no se cobra ni se confirma una solicitud hasta que el Tutor la responda. Los ceros del panel Admin indican que todavía no hay datos integrados, no actividad real. Los perfiles de muestra que permanecen en la galería y el sistema de diseño son únicamente material visual y no se ofrecen en la búsqueda de tutores.
 
 ## Pantallas por rol y ruta
 
@@ -82,11 +90,10 @@ Catálogo leído directamente de `ROUTES` y `ROLE_SCREEN_ROUTES` en `src/routes/
 | Pantalla | Ruta URL | Vista interna (`internalId`) |
 | --- | --- | --- |
 | Registro de Alumno | `/` | `register-student` |
-| Buscar Tutores (lista, mapa y filtros) | `/` | `search` |
+| Buscar Tutores verificados (lista, filtros; disponibilidad de mapa pendiente) | `/` | `search` |
 | Perfil público del Tutor | `/` | `profile` |
-| Reservar clase (única, serie o paquete) | `/` | `booking` |
-| Confirmación y pago protegido | `/` | `checkout` |
-| Clase confirmada | `/` | `confirmed` |
+| Solicitar una clase individual (horarios reales, sin cobro) | `/` | `booking` |
+| Solicitud pendiente de confirmación | `/` | `request-sent` |
 | Calendario e historial del Alumno | `/` | `calendar` |
 | Detalle de clase (reprogramar, cancelar, calificar, reportar) | `/` | `class-detail` |
 | Mensajes y conversación | `/` | `messages / conversation` |
@@ -128,8 +135,10 @@ Catálogo leído directamente de `ROUTES` y `ROLE_SCREEN_ROUTES` en `src/routes/
 | Capacidad | Qué está simulado hoy | Qué debe reemplazarse en producción | Archivo en `src/services` |
 | --- | --- | --- | --- |
 | Autenticación | Registro e inicio de sesión con Supabase Auth; RLS en perfiles/roles y MFA TOTP para administradores. | Flujo de recuperación/actualización de contraseña y endurecimiento de configuración de producción. | `src/services/auth.ts` |
-| Pagos | Cálculo local de cargos/comisiones, autorización inmediata con tarjeta, retención simulada de 48 h, retiros y resolución en memoria de disputas. | Integración con pasarela de pagos en MXN (tokenización PCI, escrow/retención programada de 48 h, dispersión SPEI a cuentas CLABE y webhooks de reembolsos/disputas). | `src/services/pagos.ts` |
-| Mensajes | Sin hilos iniciales; el envío local de mensajes no persiste y los adjuntos solo conservan el nombre. | Transporte en tiempo real (WebSockets/SSE), persistencia de conversaciones, moderación en servidor y escaneo/almacenamiento de archivos adjuntos. | `src/services/mensajes.ts` |
-| Mapa | Catálogo estático con coordenadas porcentuales (`pin`) sobre un plano SVG ilustrativo de Mérida en `listMapTutors`. | SDK de mapas interactivos (Mapbox o Google Maps), geocodificación por zona/radio en kilómetros y consulta geoespacial desde API. | `src/services/reservas.ts` |
+| Pagos | La solicitud de clase no procesa pagos. El checkout que permanece en la galería es solo una muestra visual. | Integración con pasarela de pagos en MXN (tokenización PCI, retención programada, dispersión SPEI y webhooks de reembolsos/disputas). | `src/services/pagos.ts` |
+| Mensajes | Conversaciones y texto persistidos en Supabase, acceso limitado a participantes y estado de lectura. El adjunto conserva solo su nombre; no se almacena el archivo. | Actualización en tiempo real, carga privada de adjuntos, moderación y escaneo de archivos. | `src/services/mensajes.ts` |
+| Catálogo público de Tutores | Perfiles profesionales completos y verificados desde Supabase; fotos privadas con URL firmada. | Reseñas, distancia, ubicación aproximada, disponibilidad y búsqueda geoespacial. | `src/services/perfiles.ts` |
+| Mapa | Vista ilustrativa sin coordenadas personales; los perfiles indican su zona de servicio. | SDK de mapas interactivos (Mapbox o Google Maps), geocodificación por zona/radio en kilómetros y consulta geoespacial desde API. | `src/services/reservas.ts` |
+| Disponibilidad, reservas y ciclo de clase | Horarios semanales, solicitudes, cancelaciones, propuestas de reprogramación, finalización y notificaciones persistidos en Supabase. Los horarios se publican en bloques de una hora; las cancelaciones requieren más de 24 horas de anticipación; una reprogramación requiere aceptación de la otra persona. | Excepciones por fecha, series/paquetes, recordatorios automáticos y pagos. Las reservas actuales no cobran. | `src/services/agenda.ts` |
 | Almacenamiento de documentos | Los documentos de título y cédula se suben al bucket privado `tutor-credentials` (PDF/JPG/PNG hasta 10 MB); el Admin los abre con enlaces temporales firmados y guarda la decisión y el motivo de rechazo. | Historial inmutable de cambios de revisión y notificaciones automáticas al Tutor. | `src/services/perfiles.ts` |
-| Calendario externo | Confirmación local en `exportSessionToExternalCalendar` (`ics-simulado`) y disponibilidad del Tutor mantenida en memoria. | Generación firmada de archivos `.ics`, sincronización OAuth bidireccional con Google Calendar / Apple Calendar y bloqueo transaccional de horarios. | `src/services/calendario.ts` |
+| Calendario externo | Confirmación local en `exportSessionToExternalCalendar` (`ics-simulado`). | Generación firmada de archivos `.ics` y sincronización OAuth bidireccional con Google Calendar / Apple Calendar. | `src/services/calendario.ts` |

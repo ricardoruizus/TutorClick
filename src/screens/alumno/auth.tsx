@@ -175,7 +175,7 @@ export function Welcome({
         <Logo size="lg" />
         <div>
           <h1 className="text-[32px] font-bold leading-tight">Aprende con un tutor cerca de ti</h1>
-          <p className="mt-3 text-[16px] text-g600">Encuentra Tutores en Mérida, presencial o en línea, y paga con seguridad.</p>
+          <p className="mt-3 text-[16px] text-g600">Encuentra Tutores en Mérida, presencial o en línea, y solicita el horario que te convenga.</p>
         </div>
         <ul className="flex flex-col gap-3">
           {[[BookOpen, 'Reserva instantánea en Matemáticas, Física y más'], [ShieldCheck, 'Pagas ahora; el tutor recibe el pago 48 h después de la clase'], [CheckCircle2, 'Tutores verificados con reseñas reales']].map(([I, t]) => {

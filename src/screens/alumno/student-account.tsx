@@ -37,7 +37,6 @@ import {
   DEFAULT_NOTIFICATION_PREFS,
   DEFAULT_SAVED_CARDS,
   DEFAULT_STUDENT_PROFILE,
-  PUBLISHED_TUTORS,
   formatMoney,
 } from '../../data/mock'
 import type {
@@ -126,6 +125,7 @@ export function StudentAccountScreen({
   onUpdateProfile,
   onUpdatePhoto,
   sessions,
+  tutors,
   favorites,
   onToggleFavorite,
   cards,
@@ -144,6 +144,7 @@ export function StudentAccountScreen({
   onUpdateProfile: (patch: Partial<StudentProfileData>) => Promise<void>
   onUpdatePhoto: (file: File) => Promise<string | undefined>
   sessions: ClassSession[]
+  tutors: TutorData[]
   favorites: string[]
   onToggleFavorite: (tutorId: string) => void
   cards: SavedCardItem[]
@@ -206,7 +207,7 @@ export function StudentAccountScreen({
   const myTutors = useMemo(() => {
     const byTutor = new Map<string, { tutor: TutorData; count: number; lastSubject: string }>()
     for (const s of sessions) {
-      const catalogTutor = PUBLISHED_TUTORS.find((t) => t.id === s.tutorId)
+      const catalogTutor = tutors.find((t) => t.id === s.tutorId)
       if (!catalogTutor) continue
       const prev = byTutor.get(s.tutorId)
       if (prev) {
@@ -220,11 +221,11 @@ export function StudentAccountScreen({
       }
     }
     return Array.from(byTutor.values()).sort((a, b) => b.count - a.count)
-  }, [sessions])
+  }, [sessions, tutors])
 
   const favoriteTutors = useMemo(
-    () => PUBLISHED_TUTORS.filter((t) => favorites.includes(t.id)),
-    [favorites],
+    () => tutors.filter((t) => favorites.includes(t.id)),
+    [favorites, tutors],
   )
 
   const notificationItems: StudentNotification[] = []

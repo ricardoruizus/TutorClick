@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle,
   Ban,
+  Bell,
   CalendarClock,
   CalendarDays,
   CalendarPlus,
@@ -33,9 +34,12 @@ import { Avatar, BottomNav, Button, StatusChip, TopBar, studentNav, tutorNav, ty
 import { ListState } from './list-state'
 import {
   type AvailabilityBlock,
+  type ClassBookingRecord,
+  type ClassNotificationRecord,
   type ClassMode,
   type ClassSession,
   type ClassStatus,
+  type TutorWeeklyAvailability,
   type UserRole,
 } from '../../types'
 import { calcStudentTotal, calcTutorNet } from '../../services/pagos'
@@ -47,11 +51,477 @@ import {
   PROPOSAL_DAYS,
   PROPOSAL_TIMES,
   formatMoney,
+  MEETING_PLACES,
   formatTimeChip,
   formatTimeRange,
 } from '../../data/mock'
+import type { AvailableClassSlot } from '../../services/agenda'
 
 const cx = (...values: (string | false | undefined)[]) => values.filter(Boolean).join(' ')
+const AVAILABILITY_DAYS = [
+  { day: 1, short: 'Lun', label: 'Lunes' },
+  { day: 2, short: 'Mar', label: 'Martes' },
+  { day: 3, short: 'Mié', label: 'Miércoles' },
+  { day: 4, short: 'Jue', label: 'Jueves' },
+  { day: 5, short: 'Vie', label: 'Viernes' },
+  { day: 6, short: 'Sáb', label: 'Sábado' },
+  { day: 0, short: 'Dom', label: 'Domingo' },
+]
+const MERIDA_TIME_ZONE = 'America/Merida'
+
+function formatBookingDate(startsAt: string, options: Intl.DateTimeFormatOptions) {
+  return new Intl.DateTimeFormat('es-MX', {
+    ...options,
+    timeZone: MERIDA_TIME_ZONE,
+  }).format(new Date(startsAt))
+}
+
+function ClassNotificationsSection({
+  notifications,
+  error,
+  onMarkRead,
+}: {
+  notifications: ClassNotificationRecord[]
+  error?: string | null
+  onMarkRead?: (notificationId: string) => Promise<void>
+}) {
+  const [busyNotificationId, setBusyNotificationId] = useState('')
+  const [actionError, setActionError] = useState<string | null>(null)
+  if (notifications.length === 0 && !error) return null
+
+  async function markRead(notificationId: string) {
+    if (!onMarkRead) return
+    setBusyNotificationId(notificationId)
+    setActionError(null)
+    try {
+      await onMarkRead(notificationId)
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'No se pudo actualizar la notificación.')
+    } finally {
+      setBusyNotificationId('')
+    }
+  }
+
+  const unreadCount = notifications.filter((notification) => !notification.readAt).length
+  return (
+    <section aria-labelledby="class-notifications-title" className="mb-4 rounded-card border border-g200 bg-white p-4 shadow-sm">
+      <h2 id="class-notifications-title" className="mb-3 flex items-center gap-2 text-[16px] font-bold">
+        <Bell size={18} aria-hidden />
+        Notificaciones {unreadCount > 0 && <span className="rounded-full bg-ink px-2 py-0.5 text-[12px] text-white">{unreadCount}</span>}
+      </h2>
+      {error && <p role="alert" className="mb-3 rounded-btn border border-err bg-err-bg p-3 text-[13px] font-semibold text-err">{error}</p>}
+      {actionError && <p role="alert" className="mb-3 rounded-btn border border-err bg-err-bg p-3 text-[13px] font-semibold text-err">{actionError}</p>}
+      <div className="flex flex-col gap-2">
+        {notifications.map((notification) => (
+          <article
+            key={notification.id}
+            className={cx('rounded-btn border p-3', notification.readAt ? 'border-g200 bg-white' : 'border-info bg-info-bg')}
+          >
+            <p className="text-[14px] font-bold">{notification.title}</p>
+            <p className="mt-1 text-[13px] text-g700">{notification.message}</p>
+            <div className="mt-2 flex items-center justify-between gap-2">
+              <time className="text-[11px] text-g600">
+                {formatBookingDate(notification.createdAt, {
+                  day: 'numeric',
+                  month: 'short',
+                  hour: 'numeric',
+                  minute: '2-digit',
+                })}
+              </time>
+              {!notification.readAt && (
+                <button
+                  type="button"
+                  disabled={busyNotificationId === notification.id || !onMarkRead}
+                  onClick={() => void markRead(notification.id)}
+                  className="min-h-11 rounded-btn px-2 text-[12px] font-semibold text-ink underline underline-offset-2 disabled:opacity-50"
+                >
+                  {busyNotificationId === notification.id ? 'Guardando…' : 'Marcar leída'}
+                </button>
+              )}
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function BookingRequestsSection({
+  role,
+  bookings,
+  error,
+  onRespond,
+  onCancel,
+  onListRescheduleSlots,
+  onProposeReschedule,
+  onRespondToReschedule,
+  onComplete,
+}: {
+  role: UserRole
+  bookings: ClassBookingRecord[]
+  error?: string | null
+  onRespond?: (
+    bookingId: string,
+    response: Extract<ClassBookingRecord['status'], 'confirmed' | 'rejected'>,
+  ) => Promise<void>
+  onCancel?: (bookingId: string, reason: string) => Promise<void>
+  onListRescheduleSlots?: (bookingId: string) => Promise<AvailableClassSlot[]>
+  onProposeReschedule?: (input: {
+    bookingId: string
+    startsAt: string
+    mode: ClassMode
+    location: string | null
+  }) => Promise<void>
+  onRespondToReschedule?: (bookingId: string, response: 'accept' | 'reject') => Promise<void>
+  onComplete?: (bookingId: string) => Promise<void>
+}) {
+  const [busyBookingId, setBusyBookingId] = useState('')
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [cancellingBookingId, setCancellingBookingId] = useState('')
+  const [cancellationReason, setCancellationReason] = useState('')
+  const [reschedulingBookingId, setReschedulingBookingId] = useState('')
+  const [rescheduleSlots, setRescheduleSlots] = useState<AvailableClassSlot[]>([])
+  const [rescheduleLoading, setRescheduleLoading] = useState(false)
+  const [selectedRescheduleSlot, setSelectedRescheduleSlot] = useState('')
+  const [reschedulePlace, setReschedulePlace] = useState(MEETING_PLACES[0])
+
+  if (bookings.length === 0 && !error) return null
+
+  const orderedBookings = [...bookings].sort(
+    (a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt),
+  )
+  const activeStatuses: ClassBookingRecord['status'][] = [
+    'pending_confirmation',
+    'confirmed',
+    'reschedule_pending',
+  ]
+
+  async function respond(
+    bookingId: string,
+    response: Extract<ClassBookingRecord['status'], 'confirmed' | 'rejected'>,
+  ) {
+    if (!onRespond) return
+    setBusyBookingId(bookingId)
+    setActionError(null)
+    try {
+      await onRespond(bookingId, response)
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'No se pudo actualizar la solicitud.')
+    } finally {
+      setBusyBookingId('')
+    }
+  }
+
+  async function runBookingAction(bookingId: string, action: () => Promise<void>) {
+    setBusyBookingId(bookingId)
+    setActionError(null)
+    try {
+      await action()
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'No se pudo actualizar la clase.')
+    } finally {
+      setBusyBookingId('')
+    }
+  }
+
+  async function openReschedule(bookingId: string) {
+    if (!onListRescheduleSlots) return
+    setReschedulingBookingId(bookingId)
+    setRescheduleLoading(true)
+    setRescheduleSlots([])
+    setSelectedRescheduleSlot('')
+    setActionError(null)
+    try {
+      const slots = await onListRescheduleSlots(bookingId)
+      setRescheduleSlots(slots)
+      if (slots.length === 0) setActionError('No hay horarios disponibles para proponer en los próximos 30 días.')
+    } catch (error) {
+      setReschedulingBookingId('')
+      setActionError(error instanceof Error ? error.message : 'No se pudieron cargar los horarios.')
+    } finally {
+      setRescheduleLoading(false)
+    }
+  }
+
+  async function proposeReschedule(booking: ClassBookingRecord) {
+    const slot = rescheduleSlots.find((candidate) => candidate.startsAt === selectedRescheduleSlot)
+    if (!slot || !onProposeReschedule) return
+    await runBookingAction(booking.id, async () => {
+      await onProposeReschedule({
+        bookingId: booking.id,
+        startsAt: slot.startsAt,
+        mode: slot.mode,
+        location: slot.mode === 'Presencial' ? reschedulePlace : null,
+      })
+      setReschedulingBookingId('')
+      setRescheduleSlots([])
+    })
+  }
+
+  return (
+    <section aria-labelledby="booking-requests-title" className="mb-4 rounded-card border border-g200 bg-white p-4 shadow-sm">
+      <h2 id="booking-requests-title" className="mb-3 text-[16px] font-bold">
+        {role === 'tutor' ? 'Solicitudes de reserva' : 'Tus solicitudes de clase'}
+      </h2>
+      {error && (
+        <p role="alert" className="mb-3 rounded-btn border border-err bg-err-bg p-3 text-[13px] font-semibold text-err">
+          {error}
+        </p>
+      )}
+      {bookings.length === 0 && !error && (
+        <p className="text-[13px] text-g600">Todavía no tienes solicitudes.</p>
+      )}
+      {actionError && (
+        <p role="alert" className="mb-3 rounded-btn border border-err bg-err-bg p-3 text-[13px] font-semibold text-err">
+          {actionError}
+        </p>
+      )}
+      <div className="flex flex-col gap-3">
+        {orderedBookings.map((booking) => {
+          const pending = booking.status === 'pending_confirmation'
+          const statusByBooking: Record<ClassBookingRecord['status'], ChipKey> = {
+            pending_confirmation: 'Pendiente',
+            confirmed: 'Confirmada',
+            rejected: 'Rechazado',
+            cancelled: 'Cancelada',
+            reschedule_pending: 'Reprogramación propuesta',
+            completed: 'Finalizada',
+          }
+          const status = statusByBooking[booking.status]
+          const counterpart = role === 'tutor' ? booking.studentName : booking.tutorName
+          const hasCancellationWindow = Date.parse(booking.startsAt) > Date.now() + 24 * 60 * 60 * 1000
+          const canCancel = activeStatuses.includes(booking.status) && hasCancellationWindow
+          const canReschedule = booking.status === 'confirmed' && hasCancellationWindow
+          const canComplete = role === 'tutor'
+            && booking.status === 'confirmed'
+            && Date.parse(booking.endsAt) <= Date.now()
+          const isRescheduleProposer = booking.rescheduleProposedBy === (
+            role === 'tutor' ? booking.tutorUserId : booking.studentUserId
+          )
+          return (
+            <article key={booking.id} className="rounded-btn border border-g200 p-3">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <p className="font-semibold">{counterpart}</p>
+                  <p className="text-[13px] text-g600">{booking.subject} · {booking.mode}</p>
+                </div>
+                <StatusChip status={status} />
+              </div>
+              <p className="mt-2 text-[14px] font-semibold capitalize">
+                {formatBookingDate(booking.startsAt, {
+                  weekday: 'long',
+                  day: 'numeric',
+                  month: 'long',
+                  year: 'numeric',
+                })}
+                {' · '}
+                {formatBookingDate(booking.startsAt, { hour: 'numeric', minute: '2-digit' })}
+              </p>
+              {activeStatuses.includes(booking.status) && !hasCancellationWindow && (
+                <p className="mt-1 text-[12px] font-medium text-g600">
+                  Los cambios y cancelaciones están disponibles con más de 24 horas de anticipación.
+                </p>
+              )}
+              {booking.location && <p className="mt-1 text-[13px] text-g600">{booking.location}</p>}
+              {booking.mode === 'En línea' && booking.status === 'confirmed' && (
+                <p className="mt-1 text-[13px] text-g600">El enlace de la clase se coordinará por mensajes.</p>
+              )}
+              {booking.status === 'cancelled' && booking.cancellationReason && (
+                <p className="mt-1 text-[13px] text-g600">Motivo: {booking.cancellationReason}</p>
+              )}
+              {booking.status === 'reschedule_pending' && booking.proposedStartsAt && (
+                <div className="mt-3 rounded-btn border border-warn bg-warn-bg p-3">
+                  <p className="text-[13px] font-bold">Nueva propuesta</p>
+                  <p className="mt-1 text-[13px]">
+                    {formatBookingDate(booking.proposedStartsAt, {
+                      weekday: 'long',
+                      day: 'numeric',
+                      month: 'long',
+                      year: 'numeric',
+                    })}
+                    {' · '}
+                    {formatBookingDate(booking.proposedStartsAt, { hour: 'numeric', minute: '2-digit' })}
+                  </p>
+                  {booking.proposedLocation && <p className="text-[12px] text-g600">{booking.proposedLocation}</p>}
+                  {isRescheduleProposer ? (
+                    <p className="mt-2 text-[12px] text-g700">Esperando respuesta de la otra persona. El horario original sigue reservado.</p>
+                  ) : (
+                    <div className="mt-3 grid grid-cols-2 gap-2">
+                      <Button
+                        disabled={busyBookingId === booking.id || !onRespondToReschedule}
+                        loading={busyBookingId === booking.id}
+                        onClick={() => onRespondToReschedule && void runBookingAction(
+                          booking.id,
+                          () => onRespondToReschedule(booking.id, 'accept'),
+                        )}
+                      >
+                        Aceptar
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        disabled={busyBookingId === booking.id || !onRespondToReschedule}
+                        onClick={() => onRespondToReschedule && void runBookingAction(
+                          booking.id,
+                          () => onRespondToReschedule(booking.id, 'reject'),
+                        )}
+                      >
+                        Rechazar
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
+              {role === 'tutor' && pending && (
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <Button
+                    disabled={busyBookingId === booking.id}
+                    loading={busyBookingId === booking.id}
+                    onClick={() => void respond(booking.id, 'confirmed')}
+                  >
+                    Confirmar
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    disabled={busyBookingId === booking.id}
+                    onClick={() => void respond(booking.id, 'rejected')}
+                  >
+                    Rechazar
+                  </Button>
+                </div>
+              )}
+              {canCancel && (
+                <div className="mt-3">
+                  {cancellingBookingId === booking.id ? (
+                    <div className="space-y-2 rounded-btn border border-g200 p-3">
+                      <label className="block text-[12px] font-semibold" htmlFor={`cancel-reason-${booking.id}`}>
+                        Motivo (opcional)
+                      </label>
+                      <textarea
+                        id={`cancel-reason-${booking.id}`}
+                        maxLength={500}
+                        rows={2}
+                        value={cancellationReason}
+                        onChange={(event) => setCancellationReason(event.target.value)}
+                        className="w-full rounded-btn border border-g300 p-2 text-[13px]"
+                      />
+                      <div className="grid grid-cols-2 gap-2">
+                        <Button
+                          variant="destructive"
+                          disabled={busyBookingId === booking.id}
+                          loading={busyBookingId === booking.id}
+                          onClick={() => onCancel && void runBookingAction(booking.id, async () => {
+                            await onCancel(booking.id, cancellationReason)
+                            setCancellingBookingId('')
+                            setCancellationReason('')
+                          })}
+                        >
+                          Confirmar cancelación
+                        </Button>
+                        <Button variant="secondary" onClick={() => setCancellingBookingId('')}>Volver</Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <Button
+                      variant="secondary"
+                      disabled={!onCancel}
+                      onClick={() => {
+                        setCancellingBookingId(booking.id)
+                        setCancellationReason('')
+                      }}
+                    >
+                      Cancelar clase
+                    </Button>
+                  )}
+                </div>
+              )}
+              {canReschedule && (
+                <div className="mt-2">
+                  {reschedulingBookingId === booking.id ? (
+                    <div className="space-y-2 rounded-btn border border-g200 p-3">
+                      {rescheduleLoading ? (
+                        <p className="text-[13px] text-g600">Buscando horarios disponibles…</p>
+                      ) : (
+                        <>
+                          <label className="block text-[12px] font-semibold" htmlFor={`reschedule-slot-${booking.id}`}>
+                            Horario propuesto
+                          </label>
+                          <select
+                            id={`reschedule-slot-${booking.id}`}
+                            value={selectedRescheduleSlot}
+                            onChange={(event) => setSelectedRescheduleSlot(event.target.value)}
+                            className="min-h-11 w-full rounded-btn border border-g300 bg-white px-2 text-[13px]"
+                          >
+                            <option value="">Selecciona un horario</option>
+                            {rescheduleSlots.map((slot) => (
+                              <option key={slot.startsAt} value={slot.startsAt}>
+                                {formatBookingDate(slot.startsAt, {
+                                  weekday: 'short',
+                                  day: 'numeric',
+                                  month: 'short',
+                                  hour: 'numeric',
+                                  minute: '2-digit',
+                                })} · {slot.mode}
+                              </option>
+                            ))}
+                          </select>
+                          {rescheduleSlots.find((slot) => slot.startsAt === selectedRescheduleSlot)?.mode === 'Presencial' && (
+                            <>
+                              <label className="block text-[12px] font-semibold" htmlFor={`reschedule-place-${booking.id}`}>
+                                Lugar
+                              </label>
+                              <select
+                                id={`reschedule-place-${booking.id}`}
+                                value={reschedulePlace}
+                                onChange={(event) => setReschedulePlace(event.target.value)}
+                                className="min-h-11 w-full rounded-btn border border-g300 bg-white px-2 text-[13px]"
+                              >
+                                {MEETING_PLACES.map((place) => <option key={place}>{place}</option>)}
+                              </select>
+                            </>
+                          )}
+                          <p className="text-[12px] text-g600">La otra persona debe aceptar. El horario actual se mantiene reservado mientras tanto.</p>
+                          <div className="grid grid-cols-2 gap-2">
+                            <Button
+                              disabled={!selectedRescheduleSlot || busyBookingId === booking.id || !onProposeReschedule}
+                              loading={busyBookingId === booking.id}
+                              onClick={() => void proposeReschedule(booking)}
+                            >
+                              Enviar propuesta
+                            </Button>
+                            <Button variant="secondary" onClick={() => setReschedulingBookingId('')}>Volver</Button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ) : (
+                    <Button
+                      variant="secondary"
+                      disabled={!onListRescheduleSlots}
+                      onClick={() => void openReschedule(booking.id)}
+                    >
+                      Proponer cambio de horario
+                    </Button>
+                  )}
+                </div>
+              )}
+              {canComplete && (
+                <div className="mt-2">
+                  <Button
+                    disabled={busyBookingId === booking.id || !onComplete}
+                    loading={busyBookingId === booking.id}
+                    onClick={() => onComplete && void runBookingAction(booking.id, () => onComplete(booking.id))}
+                  >
+                    Marcar clase completada
+                  </Button>
+                </div>
+              )}
+            </article>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
 
 export type CalendarViewMode = 'agenda' | 'week' | 'month'
 export type TimeFilter = 'upcoming' | 'history'
@@ -285,7 +755,7 @@ function AvailabilityBlockRow({
               <>
                 <CheckCircle2 size={13} className="text-ok" aria-hidden />
                 <span className="font-semibold text-ok">Disponible</span>
-                <span className="text-g600">· Reservable al instante</span>
+                <span className="text-g600">· Sujeto a confirmación del Tutor</span>
               </>
             ) : (
               <>
@@ -330,9 +800,24 @@ export function UnifiedCalendarScreen({
   role,
   sessions,
   tutorBlocks,
+  weeklyAvailability = [],
+  bookings = [],
+  bookingsError,
+  notifications = [],
+  notificationsError,
+  availabilityLoading = false,
+  availabilityError,
   onToggleBlock,
   onUpdateBlock,
   onApplyRecurringRule,
+  onDeleteAvailability,
+  onRespondToBooking,
+  onCancelBooking,
+  onListRescheduleSlots,
+  onProposeReschedule,
+  onRespondToReschedule,
+  onCompleteBooking,
+  onMarkNotificationRead,
   onOpenSession,
   onBookAgain,
   onFindTutor,
@@ -344,9 +829,32 @@ export function UnifiedCalendarScreen({
   role: UserRole
   sessions: ClassSession[]
   tutorBlocks: AvailabilityBlock[]
+  weeklyAvailability?: TutorWeeklyAvailability[]
+  bookings?: ClassBookingRecord[]
+  bookingsError?: string | null
+  notifications?: ClassNotificationRecord[]
+  notificationsError?: string | null
+  availabilityLoading?: boolean
+  availabilityError?: string | null
   onToggleBlock?: (blockId: string) => void
   onUpdateBlock?: (blockId: string, patch: Partial<AvailabilityBlock>) => void
-  onApplyRecurringRule?: (rule: { days: number[]; start: string; end: string; mode: ClassMode }) => void
+  onApplyRecurringRule?: (rule: { days: number[]; start: string; end: string; mode: ClassMode }) => Promise<void>
+  onDeleteAvailability?: (slotId: string) => Promise<void>
+  onRespondToBooking?: (
+    bookingId: string,
+    response: Extract<ClassBookingRecord['status'], 'confirmed' | 'rejected'>,
+  ) => Promise<void>
+  onCancelBooking?: (bookingId: string, reason: string) => Promise<void>
+  onListRescheduleSlots?: (bookingId: string) => Promise<AvailableClassSlot[]>
+  onProposeReschedule?: (input: {
+    bookingId: string
+    startsAt: string
+    mode: ClassMode
+    location: string | null
+  }) => Promise<void>
+  onRespondToReschedule?: (bookingId: string, response: 'accept' | 'reject') => Promise<void>
+  onCompleteBooking?: (bookingId: string) => Promise<void>
+  onMarkNotificationRead?: (notificationId: string) => Promise<void>
   onOpenSession: (sessionId: string, initialSheet?: DetailSheetKind) => void
   onBookAgain?: (tutorId: string) => void
   onFindTutor?: () => void
@@ -363,10 +871,12 @@ export function UnifiedCalendarScreen({
   const [historyMonthFilter, setHistoryMonthFilter] = useState('all')
   const [savedToast, setSavedToast] = useState(false)
   const [showRecurring, setShowRecurring] = useState(false)
-  const [ruleDays, setRuleDays] = useState<number[]>([23, 25, 27])
+  const [ruleDays, setRuleDays] = useState<number[]>([1, 3, 5])
   const [ruleStart, setRuleStart] = useState('16:00')
   const [ruleEnd, setRuleEnd] = useState('19:00')
   const [ruleMode, setRuleMode] = useState<ClassMode>('En línea')
+  const [scheduleActionError, setScheduleActionError] = useState<string | null>(null)
+  const [deletingAvailabilityId, setDeletingAvailabilityId] = useState('')
 
   function announceSaved() {
     setSavedToast(true)
@@ -381,6 +891,32 @@ export function UnifiedCalendarScreen({
   function changeBlockMode(id: string, mode: ClassMode) {
     onUpdateBlock?.(id, { mode })
     announceSaved()
+  }
+
+  async function applyRule() {
+    if (!onApplyRecurringRule) return
+    setScheduleActionError(null)
+    try {
+      await onApplyRecurringRule({ days: ruleDays, start: ruleStart, end: ruleEnd, mode: ruleMode })
+      setShowRecurring(false)
+      announceSaved()
+    } catch (error) {
+      setScheduleActionError(error instanceof Error ? error.message : 'No se pudo guardar la disponibilidad.')
+    }
+  }
+
+  async function deleteAvailability(slotId: string) {
+    if (!onDeleteAvailability) return
+    setDeletingAvailabilityId(slotId)
+    setScheduleActionError(null)
+    try {
+      await onDeleteAvailability(slotId)
+      announceSaved()
+    } catch (error) {
+      setScheduleActionError(error instanceof Error ? error.message : 'No se pudo eliminar el horario.')
+    } finally {
+      setDeletingAvailabilityId('')
+    }
   }
 
   const upcomingSessions = useMemo(
@@ -625,13 +1161,37 @@ export function UnifiedCalendarScreen({
       {/* Cuerpo desplazable según vista */}
       <div className="flex-1 overflow-y-auto bg-g50 px-4 py-3.5">
         <ListState
-          count={role === 'tutor' ? filtered.length + tutorBlocks.length + 1 : filtered.length}
+          count={
+            role === 'tutor'
+              ? filtered.length + tutorBlocks.length + 1
+              : filtered.length + bookings.length + notifications.length + Number(!!bookingsError) + Number(!!notificationsError)
+          }
           emptyTitle={filter === 'upcoming' ? 'Aún no tienes clases programadas' : 'Sin clases en tu historial'}
-          emptyDescription="Reserva clases presenciales o en línea en Mérida con pago protegido."
+          emptyDescription="Solicita una clase presencial o en línea en Mérida. El Tutor debe confirmar la solicitud."
           emptyAction="Encontrar Tutor"
           onEmptyAction={() => onFindTutor?.()}
           loadingLabel="Cargando calendario"
         >
+        {(notifications.length > 0 || notificationsError) && (
+          <ClassNotificationsSection
+            notifications={notifications}
+            error={notificationsError}
+            onMarkRead={onMarkNotificationRead}
+          />
+        )}
+        {(bookings.length > 0 || bookingsError) && (
+          <BookingRequestsSection
+            role={role}
+            bookings={bookings}
+            error={bookingsError}
+            onRespond={onRespondToBooking}
+            onCancel={onCancelBooking}
+            onListRescheduleSlots={onListRescheduleSlots}
+            onProposeReschedule={onProposeReschedule}
+            onRespondToReschedule={onRespondToReschedule}
+            onComplete={onCompleteBooking}
+          />
+        )}
         {role === 'tutor' && filter === 'upcoming' && (
           <section className="mb-4 rounded-card border border-g200 bg-white p-4 shadow-sm">
             <button
@@ -648,10 +1208,50 @@ export function UnifiedCalendarScreen({
             </button>
             {showRecurring && (
               <div className="mt-3 flex flex-col gap-3 border-t border-g200 pt-3">
+                {availabilityError && (
+                  <p role="alert" className="rounded-btn border border-err bg-err-bg p-3 text-[13px] font-semibold text-err">
+                    {availabilityError}
+                  </p>
+                )}
+                {scheduleActionError && (
+                  <p role="alert" className="rounded-btn border border-err bg-err-bg p-3 text-[13px] font-semibold text-err">
+                    {scheduleActionError}
+                  </p>
+                )}
+                <div>
+                  <h3 className="mb-2 text-[13px] font-bold">Horarios guardados</h3>
+                  {availabilityLoading ? (
+                    <p role="status" className="text-[13px] text-g600">Cargando disponibilidad…</p>
+                  ) : weeklyAvailability.length === 0 ? (
+                    <p className="rounded-btn bg-g50 p-3 text-[13px] text-g600">
+                      Aún no has publicado horarios semanales.
+                    </p>
+                  ) : (
+                    <ul className="flex flex-col gap-2">
+                      {weeklyAvailability.map((slot) => (
+                        <li key={slot.id} className="flex items-center justify-between gap-2 rounded-btn border border-g200 px-3 py-2">
+                          <span className="min-w-0 text-[13px]">
+                            <strong>{AVAILABILITY_DAYS.find((day) => day.day === slot.weekday)?.label}</strong>
+                            {' · '}{formatTimeRange(slot.startTime)} · {slot.mode}
+                          </span>
+                          <button
+                            type="button"
+                            aria-label={`Eliminar horario del ${AVAILABILITY_DAYS.find((day) => day.day === slot.weekday)?.label} a las ${formatTimeChip(slot.startTime)}`}
+                            disabled={deletingAvailabilityId === slot.id}
+                            onClick={() => void deleteAvailability(slot.id)}
+                            className="min-h-11 shrink-0 rounded-btn px-2 text-[13px] font-semibold text-err hover:bg-err-bg disabled:opacity-50"
+                          >
+                            {deletingAvailabilityId === slot.id ? 'Eliminando…' : 'Eliminar'}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
                 <div>
                   <p className="mb-2 text-[12px] font-semibold text-g700">Días</p>
-                  <div className="grid grid-cols-5 gap-1.5">
-                    {WEEK_DAYS.map((day) => {
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {AVAILABILITY_DAYS.map((day) => {
                       const selected = ruleDays.includes(day.day)
                       return (
                         <button
@@ -671,13 +1271,13 @@ export function UnifiedCalendarScreen({
                   <label className="flex flex-col gap-1 text-[12px] font-semibold text-g700">
                     Desde
                     <select value={ruleStart} onChange={(e) => setRuleStart(e.target.value)} className="min-h-11 rounded-btn border border-g500 bg-white px-2 text-[14px] text-ink">
-                      {['09:00', '12:00', '16:00', '17:00'].map((time) => <option key={time} value={time}>{formatTimeChip(time)}</option>)}
+                      {['09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00'].map((time) => <option key={time} value={time}>{formatTimeChip(time)}</option>)}
                     </select>
                   </label>
                   <label className="flex flex-col gap-1 text-[12px] font-semibold text-g700">
                     Hasta
                     <select value={ruleEnd} onChange={(e) => setRuleEnd(e.target.value)} className="min-h-11 rounded-btn border border-g500 bg-white px-2 text-[14px] text-ink">
-                      {['17:00', '18:00', '19:00', '20:00'].map((time) => <option key={time} value={time}>{formatTimeChip(time)}</option>)}
+                      {['10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00', '20:00'].map((time) => <option key={time} value={time}>{formatTimeChip(time)}</option>)}
                     </select>
                   </label>
                 </div>
@@ -688,20 +1288,17 @@ export function UnifiedCalendarScreen({
                     </button>
                   ))}
                 </div>
-                <p className="flex items-start gap-2 rounded-btn border border-warn bg-warn-bg p-3 text-[12px] font-semibold text-warn">
+                <p className="flex items-start gap-2 rounded-btn border border-info bg-info-bg p-3 text-[12px] font-semibold text-info">
                   <CalendarClock size={16} className="mt-0.5 shrink-0" aria-hidden />
-                  2 clases reservadas se conservarán
+                  Cada bloque dura una hora y se repite semanalmente. Las solicitudes existentes no cambian.
                 </p>
                 <Button
                   full
-                  disabled={ruleDays.length === 0}
-                  onClick={() => {
-                    onApplyRecurringRule?.({ days: ruleDays, start: ruleStart, end: ruleEnd, mode: ruleMode })
-                    setShowRecurring(false)
-                    announceSaved()
-                  }}
+                  disabled={ruleDays.length === 0 || ruleStart >= ruleEnd || !onApplyRecurringRule}
+                  loading={availabilityLoading}
+                  onClick={() => void applyRule()}
                 >
-                  Aplicar regla
+                  Guardar horarios semanales
                 </Button>
               </div>
             )}
@@ -737,7 +1334,7 @@ export function UnifiedCalendarScreen({
               {filter === 'upcoming' ? 'Aún no tienes clases programadas' : 'Sin clases en tu historial'}
             </h3>
             <p className="max-w-64 text-g600">
-              Reserva clases presenciales o en línea en Mérida con pago protegido.
+              Solicita una clase presencial o en línea. El Tutor debe confirmar la solicitud.
             </p>
             <Button icon={Search} onClick={onFindTutor}>
               Encuentra a tu tutor

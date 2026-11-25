@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { CalendarDays, Shuffle, Video, MapPin } from 'lucide-react'
+import { CalendarDays, CheckCircle2, Shuffle, Video, MapPin } from 'lucide-react'
 import { Login, Recover, RoleChoice, StudentForm, Welcome } from './auth'
 import { BookingScreen, type BookingSelection } from './booking'
-import { CheckoutScreen, ConfirmedScreen, DEFAULT_PAYMENT_STATE, type SavedPaymentState } from './checkout'
 import { BottomNav, Button, TopBar, studentNav } from '../../components/ui/ds'
 import { ConversationScreen, MessagesListScreen } from '../../components/ui/messages'
 import { TutorProfile, type Profile } from './profile'
@@ -16,12 +15,34 @@ import {
   type StudentProfileData,
 } from './student-account'
 import { ClassDetailScreen, UnifiedCalendarScreen, type DetailSheetKind } from '../../components/ui/unified-calendar'
-import type { AvailabilityBlock, ClassMode, ClassSession, ConversationThread, TutorData } from '../../types'
-import { DEFAULT_STUDENT_PROFILE, MEETING_PLACES, PUBLISHED_TUTORS, formatTimeChip } from '../../data/mock'
+import type {
+  AvailabilityBlock,
+  ClassBookingRecord,
+  ClassNotificationRecord,
+  ClassSession,
+  ConversationThread,
+  TutorData,
+} from '../../types'
+import { DEFAULT_STUDENT_PROFILE, formatTimeChip } from '../../data/mock'
 import { logout, register } from '../../services/auth'
 import { cancelFutureSeriesSessions as cancelFutureSeries } from '../../services/reservas'
 import {
+  listAvailableTutorSlots,
+  cancelClassBooking,
+  completeClassBooking,
+  listClassRescheduleSlots,
+  listMyClassBookings,
+  listMyClassNotifications,
+  markClassNotificationRead,
+  proposeClassReschedule,
+  requestTutorClassBooking,
+  respondToClassReschedule,
+  respondToClassBooking,
+  type AvailableClassSlot,
+} from '../../services/agenda'
+import {
   getStudentProfile,
+  listPublishedTutors,
   updateStudentProfile,
   uploadStudentProfilePhoto,
 } from '../../services/perfiles'
@@ -29,7 +50,14 @@ import {
 export type StudentRoute =
   | 'welcome' | 'login' | 'recover' | 'register-role' | 'register-student'
   | 'search' | 'calendar' | 'class-detail' | 'messages' | 'conversation' | 'account'
-  | 'profile' | 'booking' | 'checkout' | 'confirmed'
+  | 'profile' | 'booking' | 'request-sent'
+
+function formatBookingDate(startsAt: string, options: Intl.DateTimeFormatOptions) {
+  return new Intl.DateTimeFormat('es-MX', {
+    ...options,
+    timeZone: 'America/Merida',
+  }).format(new Date(startsAt))
+}
 
 function toProfile(t: TutorData): Profile {
   const both = t.modes.length === 2
@@ -91,12 +119,14 @@ export function StudentApp({
   sessions,
   tutorBlocks,
   threads,
+  threadsError,
+  threadsLoading,
+  onRefreshThreads,
   accountId,
   accountName,
   accountEmail,
   initialStudentId = accountId,
   initialRoute = 'search',
-  onAddSession,
   onUpdateSession,
   onMarkThreadRead,
   onSendMessage,
@@ -107,15 +137,17 @@ export function StudentApp({
   sessions: ClassSession[]
   tutorBlocks: AvailabilityBlock[]
   threads: ConversationThread[]
+  threadsError?: string | null
+  threadsLoading?: boolean
+  onRefreshThreads: () => Promise<void>
   accountId: string
   accountName: string
   accountEmail: string
   initialStudentId?: string
   initialRoute?: StudentRoute
-  onAddSession: (session: ClassSession) => void
   onUpdateSession: (id: string, patch: Partial<ClassSession>) => void
-  onMarkThreadRead: (threadId: string) => void
-  onSendMessage: (threadId: string, payload: { text: string; attachmentName?: string }) => void
+  onMarkThreadRead: (threadId: string) => Promise<void>
+  onSendMessage: (threadId: string, payload: { text: string; attachmentName?: string }) => Promise<void>
   onEnsureThread: (meta: {
     studentId: string
     studentName: string
@@ -124,7 +156,7 @@ export function StudentApp({
     tutorPhoto: string
     subject: string
     sessionId: string
-  }) => string
+  }) => Promise<string>
   onSwitchToTutor?: () => void
   onLogoutToLogin?: () => void
 }) {
@@ -149,20 +181,147 @@ export function StudentApp({
   const [notifPrefs, setNotifPrefs] = useState<NotificationPrefs>(DEFAULT_NOTIFICATION_PREFS)
   const [filters, setFilters] = useState<Filters>(DEFAULTS)
   const [favorites, setFavorites] = useState<string[]>([])
+  const [publishedTutors, setPublishedTutors] = useState<TutorData[]>([])
+  const [tutorsLoading, setTutorsLoading] = useState(true)
+  const [tutorsLoadError, setTutorsLoadError] = useState<string | null>(null)
+  const [tutorsRefreshKey, setTutorsRefreshKey] = useState(0)
   const [tutorId, setTutorId] = useState('')
-  const [selectedDay, setSelectedDay] = useState<number | null>(25)
-  const [selectedTime, setSelectedTime] = useState('16:00')
-  const [selectedMode, setSelectedMode] = useState<ClassMode>('En línea')
-  const [selectedPlace, setSelectedPlace] = useState(MEETING_PLACES[0])
-  const [booking, setBooking] = useState<BookingSelection | null>(null)
-  const [paymentState, setPaymentState] = useState<SavedPaymentState>(DEFAULT_PAYMENT_STATE)
-  const [confirmedCard, setConfirmedCard] = useState('')
-  const [holdSeconds, setHoldSeconds] = useState(600)
-  const [isProcessingPayment, setIsProcessingPayment] = useState(false)
-  const [expiredNotice, setExpiredNotice] = useState<string | null>(null)
+  const [availableSlots, setAvailableSlots] = useState<AvailableClassSlot[]>([])
+  const [availabilityLoading, setAvailabilityLoading] = useState(false)
+  const [availabilityError, setAvailabilityError] = useState<string | null>(null)
+  const [availabilityRefreshKey, setAvailabilityRefreshKey] = useState(0)
+  const [requestError, setRequestError] = useState<string | null>(null)
+  const [requestLoading, setRequestLoading] = useState(false)
+  const [classBookings, setClassBookings] = useState<ClassBookingRecord[]>([])
+  const [bookingsError, setBookingsError] = useState<string | null>(null)
+  const [classNotifications, setClassNotifications] = useState<ClassNotificationRecord[]>([])
+  const [notificationsError, setNotificationsError] = useState<string | null>(null)
+  const [threadActionError, setThreadActionError] = useState<string | null>(null)
+  const [requestedBooking, setRequestedBooking] = useState<BookingSelection | null>(null)
+  const [reservationId, setReservationId] = useState('')
 
   const current = history[history.length - 1]
-  const tutor = PUBLISHED_TUTORS.find((item) => item.id === tutorId)
+  const tutor = publishedTutors.find((item) => item.id === tutorId)
+
+  useEffect(() => {
+    if (current !== 'messages') return
+    void onRefreshThreads()
+      .then(() => setThreadActionError(null))
+      .catch((error: unknown) => {
+        setThreadActionError(error instanceof Error ? error.message : 'No se pudieron actualizar los mensajes.')
+      })
+  }, [current])
+
+  useEffect(() => {
+    let active = true
+    setTutorsLoading(true)
+    setTutorsLoadError(null)
+    void listPublishedTutors()
+      .then((items) => {
+        if (active) setPublishedTutors(items)
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setTutorsLoadError(error instanceof Error ? error.message : 'No se pudieron cargar los tutores publicados.')
+        }
+      })
+      .finally(() => {
+        if (active) setTutorsLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [accountId, tutorsRefreshKey])
+
+  useEffect(() => {
+    if (current !== 'calendar') return
+    let active = true
+    void listMyClassBookings()
+      .then((items) => {
+        if (!active) return
+        setClassBookings(items.filter((item) => item.studentUserId === accountId))
+        setBookingsError(null)
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setBookingsError(error instanceof Error ? error.message : 'No se pudieron cargar las solicitudes.')
+        }
+      })
+    void listMyClassNotifications()
+      .then((items) => {
+        if (!active) return
+        setClassNotifications(items)
+        setNotificationsError(null)
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setNotificationsError(error instanceof Error ? error.message : 'No se pudieron cargar las notificaciones.')
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [accountId, current])
+
+  async function refreshClassLifecycleData() {
+    const [bookingsResult, notificationsResult] = await Promise.allSettled([
+      listMyClassBookings(),
+      listMyClassNotifications(),
+    ])
+    if (bookingsResult.status === 'fulfilled') {
+      setClassBookings(bookingsResult.value.filter((item) => item.studentUserId === accountId))
+      setBookingsError(null)
+    } else {
+      setBookingsError(bookingsResult.reason instanceof Error
+        ? `La acción se completó, pero no se pudo actualizar la lista: ${bookingsResult.reason.message}`
+        : 'La acción se completó, pero no se pudo actualizar la lista.')
+    }
+    if (notificationsResult.status === 'fulfilled') {
+      setClassNotifications(notificationsResult.value)
+      setNotificationsError(null)
+    } else {
+      setNotificationsError(notificationsResult.reason instanceof Error
+        ? notificationsResult.reason.message
+        : 'No se pudieron actualizar las notificaciones.')
+    }
+  }
+
+  async function handleClassLifecycleAction(action: () => Promise<void>) {
+    await action()
+    await refreshClassLifecycleData()
+  }
+
+  async function handleMarkNotificationRead(notificationId: string) {
+    await markClassNotificationRead(notificationId)
+    setClassNotifications((currentItems) => currentItems.map((notification) =>
+      notification.id === notificationId
+        ? { ...notification, readAt: new Date().toISOString() }
+        : notification,
+    ))
+  }
+
+  useEffect(() => {
+    if (current !== 'booking' || !tutor) return
+    let active = true
+    setAvailableSlots([])
+    setAvailabilityLoading(true)
+    setAvailabilityError(null)
+    void listAvailableTutorSlots(tutor.id)
+      .then((slots) => {
+        if (active) setAvailableSlots(slots)
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setAvailabilityError(error instanceof Error ? error.message : 'No se pudieron cargar los horarios.')
+        }
+      })
+      .finally(() => {
+        if (active) setAvailabilityLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [current, tutor, availabilityRefreshKey])
 
   useEffect(() => {
     let active = true
@@ -244,30 +403,13 @@ export function StudentApp({
   }
 
   function selectTutor(id: string, destination: StudentRoute = 'profile') {
-    const nextTutor = PUBLISHED_TUTORS.find((item) => item.id === id)
+    const nextTutor = publishedTutors.find((item) => item.id === id)
     if (!nextTutor) return
-    const firstDay = nextTutor.schedule[25] ? 25 : Number(Object.keys(nextTutor.schedule)[0] ?? 25)
     setTutorId(nextTutor.id)
-    setSelectedDay(firstDay)
-    setSelectedTime(nextTutor.schedule[firstDay]?.[0] ?? '16:00')
-    if (!nextTutor.modes.includes(selectedMode)) setSelectedMode(nextTutor.modes[0])
-    setExpiredNotice(null)
+    setRequestError(null)
+    setAvailabilityError(null)
     push(destination)
   }
-
-  useEffect(() => {
-    if (current !== 'checkout' || isProcessingPayment) return
-    if (holdSeconds <= 0) {
-      setExpiredNotice('Alguien reservó este horario, elige otro')
-      setHistory((prev) => {
-        const index = prev.lastIndexOf('booking')
-        return index >= 0 ? prev.slice(0, index + 1) : ['welcome', 'search', 'profile', 'booking']
-      })
-      return
-    }
-    const timer = window.setInterval(() => setHoldSeconds((value) => Math.max(0, value - 1)), 1000)
-    return () => window.clearInterval(timer)
-  }, [current, holdSeconds, isProcessingPayment])
 
   function openSessionDetail(id: string, sheet: DetailSheetKind | null = null) {
     setActiveSessionId(id)
@@ -277,8 +419,35 @@ export function StudentApp({
 
   function openConversation(threadId: string) {
     setActiveThreadId(threadId)
-    onMarkThreadRead(threadId)
     push('conversation')
+    setThreadActionError(null)
+    void onMarkThreadRead(threadId).catch((error: unknown) => {
+      setThreadActionError(error instanceof Error ? error.message : 'No se pudo marcar la conversación como leída.')
+    })
+  }
+
+  async function ensureAndOpenConversation(meta: {
+    studentId: string
+    studentName: string
+    tutorId: string
+    tutorName: string
+    tutorPhoto: string
+    subject: string
+    sessionId: string
+  }) {
+    setThreadActionError(null)
+    try {
+      const threadId = await onEnsureThread(meta)
+      setActiveThreadId(threadId)
+      push('conversation')
+      try {
+        await onMarkThreadRead(threadId)
+      } catch (error) {
+        setThreadActionError(error instanceof Error ? error.message : 'No se pudo marcar la conversación como leída.')
+      }
+    } catch (error) {
+      setThreadActionError(error instanceof Error ? error.message : 'No se pudo abrir la conversación.')
+    }
   }
 
   const upcomingBanner = nextSession ? {
@@ -341,6 +510,22 @@ export function StudentApp({
         {current === 'search' && (
           <SearchScreen
             embedded
+            tutors={publishedTutors.map((item) => ({
+              id: item.id,
+              name: item.name,
+              subjects: item.subjects,
+              rate: item.rate,
+              rating: item.rating,
+              reviews: item.reviewsCount,
+              verified: item.verified,
+              modes: item.modes,
+              km: item.km,
+              photo: item.photo,
+              pin: item.pin,
+            }))}
+            isLoading={tutorsLoading}
+            loadError={tutorsLoadError}
+            onRetry={() => setTutorsRefreshKey((value) => value + 1)}
             favorites={favorites}
             onToggleFavorite={(id) => setFavorites((prev) => prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id])}
             appliedFilters={filters}
@@ -356,6 +541,27 @@ export function StudentApp({
             role="alumno"
             sessions={studentSessions}
             tutorBlocks={tutorBlocks}
+            bookings={classBookings}
+            bookingsError={bookingsError}
+            notifications={classNotifications}
+            notificationsError={notificationsError}
+            onMarkNotificationRead={handleMarkNotificationRead}
+            onRespondToBooking={(bookingId, response) => handleClassLifecycleAction(
+              () => respondToClassBooking(bookingId, response),
+            )}
+            onCancelBooking={(bookingId, reason) => handleClassLifecycleAction(
+              () => cancelClassBooking(bookingId, reason),
+            )}
+            onListRescheduleSlots={listClassRescheduleSlots}
+            onProposeReschedule={(input) => handleClassLifecycleAction(
+              () => proposeClassReschedule(input),
+            )}
+            onRespondToReschedule={(bookingId, response) => handleClassLifecycleAction(
+              () => respondToClassReschedule(bookingId, response),
+            )}
+            onCompleteBooking={(bookingId) => handleClassLifecycleAction(
+              () => completeClassBooking(bookingId),
+            )}
             onOpenSession={(id, sh) => openSessionDetail(id, sh ?? null)}
             onBookAgain={(id) => selectTutor(id, 'booking')}
             onFindTutor={() => push('search')}
@@ -370,7 +576,7 @@ export function StudentApp({
             initialSheet={detailSheet}
             onBack={goBack}
             onWriteMessage={() => {
-              const tId = onEnsureThread({
+              void ensureAndOpenConversation({
                 studentId: activeStudentId,
                 studentName: studentProfile.name,
                 tutorId: selectedSession.tutorId,
@@ -379,7 +585,6 @@ export function StudentApp({
                 subject: selectedSession.subject,
                 sessionId: selectedSession.id,
               })
-              openConversation(tId)
             }}
             onBookAgain={(id) => selectTutor(id, 'booking')}
             onUpdateSession={(patch) => onUpdateSession(selectedSession.id, patch)}
@@ -391,6 +596,8 @@ export function StudentApp({
             role="alumno"
             threads={studentThreads}
             sessions={studentSessions}
+            error={threadsError ?? threadActionError}
+            isLoading={threadsLoading}
             onOpenThread={openConversation}
             onFindTutor={() => push('search')}
             onBack={history.length > 1 ? goBack : undefined}
@@ -402,6 +609,7 @@ export function StudentApp({
             role="alumno"
             thread={selectedThread}
             linkedSession={studentSessions.find((s) => s.id === selectedThread.sessionId)}
+            error={threadsError ?? threadActionError}
             onBack={goBack}
             onViewClass={(sessionId) => {
               const exists = studentSessions.find((s) => s.id === sessionId)
@@ -418,6 +626,7 @@ export function StudentApp({
             onUpdateProfile={saveStudentProfile}
             onUpdatePhoto={saveStudentPhoto}
             sessions={studentSessions}
+            tutors={publishedTutors}
             favorites={favorites}
             onToggleFavorite={(id) =>
               setFavorites((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
@@ -457,7 +666,7 @@ export function StudentApp({
             onBack={goBack}
             onMessage={() => {
               const existingClass = studentSessions.find((s) => s.tutorId === tutor.id)
-              const tId = onEnsureThread({
+              void ensureAndOpenConversation({
                 studentId: activeStudentId,
                 studentName: studentProfile.name,
                 tutorId: tutor.id,
@@ -466,116 +675,98 @@ export function StudentApp({
                 subject: tutor.subjects[0],
                 sessionId: existingClass?.id ?? 'RES-1001',
               })
-              openConversation(tId)
             }}
-            onBook={(label) => {
-              const slot = tutor.quickSlots.find((item) => item.label === label)
-              if (slot) { setSelectedDay(Math.max(25, slot.day)); setSelectedTime(slot.time) }
-              push('booking')
-            }}
+            onBook={() => push('booking')}
           />
         )}
         {current === 'booking' && tutor && (
           <BookingScreen
             embedded
-            minDay={25}
-            blockedSlots={[
-              ...tutorBlocks.filter((block) => block.tutorId === tutor.id && block.state === 'bloqueado').map((block) => ({ day: block.day, time: block.time })),
-              ...sessions.filter((session) => session.tutorId === tutor.id && session.status !== 'Cancelada').map((session) => ({ day: session.day, time: session.time })),
-            ]}
             tutor={tutor}
-            selectedDay={selectedDay}
-            selectedTime={selectedTime}
-            selectedMode={selectedMode}
-            selectedPlace={selectedPlace}
-            expiredMessage={expiredNotice}
-            onClearExpired={() => setExpiredNotice(null)}
-            onBack={goBack}
-            onContinue={(selection) => {
-              setBooking(selection)
-              setSelectedDay(selection.day)
-              setSelectedTime(selection.time)
-              setSelectedMode(selection.mode)
-              setSelectedPlace(selection.place)
-              setHoldSeconds(600)
-              push('checkout')
+            availability={availableSlots}
+            availabilityLoading={availabilityLoading}
+            availabilityError={availabilityError}
+            requestError={requestError}
+            requestLoading={requestLoading}
+            onRetryAvailability={() => {
+              setRequestError(null)
+              setAvailabilityRefreshKey((value) => value + 1)
             }}
-          />
-        )}
-        {current === 'checkout' && tutor && (
-          <CheckoutScreen
-            embedded
-            showSavedCard={false}
-            tutor={tutor}
-            day={selectedDay ?? 25}
-            time={selectedTime}
-            initialClassMode={selectedMode}
-            place={selectedPlace}
-            paymentState={paymentState}
-            onPaymentStateChange={setPaymentState}
-            holdSeconds={holdSeconds}
-            onProcessingChange={setIsProcessingPayment}
-            classCount={booking?.count ?? 1}
-            discount={booking?.discount ?? 0}
-            bookingLabel={booking?.kind === 'weekly' ? `Serie semanal de ${booking.count} clases` : booking?.kind === 'package' ? `Paquete de ${booking.count} clases · vigencia de 60 días` : 'Clase única'}
             onBack={goBack}
-            onConfirmed={(cardLabel) => {
-              const selection = booking ?? {
-                day: selectedDay ?? 25, time: selectedTime, mode: selectedMode, place: selectedPlace,
-                kind: 'single' as const, count: 1, dates: [{ day: selectedDay ?? 25, time: selectedTime, available: true }],
-                discount: 0, chooseDatesLater: false,
-              }
-              const seriesId = selection.count > 1 ? `SER-${Date.now()}` : undefined
-              const base = 1100 + sessions.length
-              const rows = selection.dates.length > 0 ? selection.dates : Array.from({ length: selection.count }, (_, index) => ({ day: 23 + index % 5, time: selection.time, available: true }))
-              rows.forEach((row, index) => {
-                const seq = base + index
-                onAddSession({
-                  id: `RES-${seq}`,
-                  paymentId: `PAG-${6000 + seq}`,
-                  studentId: activeStudentId,
-                  studentName: studentProfile.name,
-                  tutorId: tutor.id,
-                  tutorName: tutor.name,
-                  tutorPhoto: tutor.photo,
-                  subject: tutor.subjects[0],
-                  day: row.day,
-                  monthLabel: 'Noviembre 2026',
-                  time: row.time,
+            onContinue={async (selection) => {
+              setRequestError(null)
+              setRequestLoading(true)
+              try {
+                const id = await requestTutorClassBooking({
+                  tutorUserId: tutor.id,
+                  startsAt: selection.startsAt,
+                  subject: tutor.subjects[0] ?? '',
                   mode: selection.mode,
-                  locationOrLink: selection.mode === 'En línea' ? `meet.tutorclick.mx/res-${seq}` : selection.place,
-                  hourlyRate: tutor.rate * (1 - selection.discount),
-                  status: 'Confirmada',
-                  paymentStatus: 'Retenido',
-                  cardUsed: cardLabel,
-                  isNewForTutor: true,
-                  bookingKind: selection.kind,
-                  seriesId,
-                  seriesIndex: seriesId ? index + 1 : undefined,
-                  seriesTotal: seriesId ? rows.length : undefined,
-                  packageDiscount: selection.discount || undefined,
-                  packageExpiresAt: selection.kind === 'package' ? '22 de enero de 2027' : undefined,
+                  location: selection.place,
                 })
-              })
-              setActiveSessionId(`RES-${base}`)
-              setConfirmedCard(cardLabel)
-              push('confirmed')
+                setReservationId(id)
+                setRequestedBooking(selection)
+                try {
+                  const updatedBookings = await listMyClassBookings()
+                  setClassBookings(updatedBookings.filter((item) => item.studentUserId === accountId))
+                  setBookingsError(null)
+                } catch (error) {
+                  setBookingsError(
+                    error instanceof Error ? error.message : 'La solicitud se envió, pero no se pudo actualizar la lista.',
+                  )
+                }
+                push('request-sent')
+              } catch (error) {
+                setRequestError(
+                  error instanceof Error ? error.message : 'No se pudo enviar la solicitud de reserva.',
+                )
+                setAvailabilityError(
+                  error instanceof Error && error.message.includes('solicitado')
+                    ? 'Ese horario acaba de ser solicitado. Actualiza la disponibilidad y elige otro.'
+                    : null,
+                )
+                setAvailabilityRefreshKey((value) => value + 1)
+              } finally {
+                setRequestLoading(false)
+              }
             }}
           />
         )}
-        {current === 'confirmed' && tutor && (
-          <ConfirmedScreen
-            embedded
-            tutor={tutor}
-            day={selectedDay ?? 25}
-            time={selectedTime}
-            mode={selectedMode}
-            place={selectedPlace}
-            cardSummary={confirmedCard}
-            reservationId={activeSessionId}
-            onBack={() => setHistory(['search'])}
-            onViewCalendar={() => push('calendar')}
-          />
+        {current === 'request-sent' && tutor && requestedBooking && (
+          <div className="flex h-full flex-col bg-white">
+            <TopBar title="Solicitud enviada" back onBack={goBack} />
+            <div className="flex flex-1 flex-col items-center justify-center gap-4 overflow-y-auto bg-g50 px-6 py-8 text-center">
+              <span className="grid size-16 place-items-center rounded-full bg-warn-bg text-warn">
+                <CheckCircle2 size={34} aria-hidden />
+              </span>
+              <div>
+                <h1 className="text-[22px] font-bold">Solicitud enviada</h1>
+                <p className="mt-2 text-[14px] text-g700">
+                  Tu clase con {tutor.name} está pendiente de confirmación. No se realizó ningún cobro.
+                </p>
+              </div>
+              <div className="w-full rounded-card border border-g200 bg-white p-4 text-left">
+                <p className="font-semibold capitalize">
+                  {formatBookingDate(requestedBooking.startsAt, {
+                    weekday: 'long',
+                    day: 'numeric',
+                    month: 'long',
+                    year: 'numeric',
+                  })}
+                </p>
+                <p className="mt-1 text-[14px] text-g600">
+                  {formatBookingDate(requestedBooking.startsAt, { hour: 'numeric', minute: '2-digit' })}
+                  {' · '}{requestedBooking.mode}
+                </p>
+                {requestedBooking.place && (
+                  <p className="mt-1 text-[13px] text-g600">{requestedBooking.place}</p>
+                )}
+                <p className="mt-2 break-all text-[12px] text-g500">Solicitud {reservationId}</p>
+              </div>
+              <Button full onClick={() => push('calendar')}>Ver mis solicitudes</Button>
+              <Button full variant="secondary" onClick={() => push('search')}>Volver a tutores</Button>
+            </div>
+          </div>
         )}
       </div>
     </div>

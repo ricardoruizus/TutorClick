@@ -1,4 +1,5 @@
 import { getSupabaseClient } from './supabase'
+import type { TutorData } from '../types'
 
 export type StudentPreferredMode = 'Presencial' | 'En línea' | 'Presencial y en línea'
 export type TutorClassMode = 'Presencial' | 'En línea'
@@ -49,6 +50,18 @@ export interface TutorProfileUpdate {
   classModes: TutorClassMode[]
   serviceZone: string
   travelRadiusKm: number
+}
+
+interface PublishedTutorRow {
+  user_id: string
+  full_name: string
+  avatar_path: string | null
+  biography: string
+  subjects: string[]
+  education_level: string | null
+  hourly_rate_mxn: number
+  class_modes: string[]
+  service_zone: string
 }
 
 const CREDENTIALS_BUCKET = 'tutor-credentials'
@@ -286,6 +299,48 @@ export async function reviewTutorCredentials(
     p_rejection_reason: rejectionReason ?? null,
   })
   throwOnError(error, 'No se pudo guardar la decisión de verificación')
+}
+
+export async function listPublishedTutors(): Promise<TutorData[]> {
+  const { data, error } = await getSupabaseClient().rpc('list_published_tutors')
+  throwOnError(error, 'No se pudo consultar la lista de tutores publicados')
+
+  const rows: PublishedTutorRow[] = data ?? []
+  return Promise.all(rows.map(async (row) => {
+    const modes = row.class_modes.filter(
+      (mode): mode is TutorClassMode => mode === 'Presencial' || mode === 'En línea',
+    )
+    if (!row.user_id || !row.full_name || !row.hourly_rate_mxn || modes.length === 0) {
+      throw new Error('Supabase devolvió un perfil público de tutor incompleto.')
+    }
+
+    return {
+      id: row.user_id,
+      name: row.full_name,
+      first: row.full_name.trim().split(/\s+/)[0] ?? row.full_name,
+      photo: row.avatar_path
+        ? await getProfilePhotoUrl(TUTOR_AVATARS_BUCKET, row.avatar_path) ?? ''
+        : '',
+      subjects: row.subjects,
+      subjectLevels: row.subjects.map((subject) => [
+        subject,
+        row.education_level ? [row.education_level] : [],
+      ]),
+      rate: Number(row.hourly_rate_mxn),
+      rating: 0,
+      reviewsCount: 0,
+      dist: [],
+      verified: true,
+      modes,
+      zone: row.service_zone,
+      km: null,
+      about: row.biography,
+      degrees: [],
+      schedule: {},
+      quickSlots: [],
+      reviews: [],
+    }
+  }))
 }
 
 export async function updateTutorProfile(

@@ -4,7 +4,7 @@ import {
   SearchX, WifiOff, RefreshCw, Locate, Route, ShieldCheck, Plus,
 } from 'lucide-react'
 import { Button, StatusChip, BottomNav, studentNav, Toast } from '../../components/ui/ds'
-import { CATALOG_SUBJECTS as SUBJECTS, SEARCH_TUTORS as TUTORS } from '../../data/mock'
+import { CATALOG_SUBJECTS as SUBJECTS } from '../../data/mock'
 import type { ClassMode as Mode, SearchTutorSummary as Tutor } from '../../types'
 
 const cx = (...a: (string | false | undefined)[]) => a.filter(Boolean).join(' ')
@@ -53,7 +53,13 @@ function TutorResult({
       )}
     >
       <div className="flex gap-3">
-        <img src={t.photo} alt={`Foto de ${t.name}`} className="size-20 shrink-0 rounded-btn bg-g200 object-cover" />
+        {t.photo ? (
+          <img src={t.photo} alt={`Foto de ${t.name}`} className="size-20 shrink-0 rounded-btn bg-g200 object-cover" />
+        ) : (
+          <span className="grid size-20 shrink-0 place-items-center rounded-btn bg-g200 text-[20px] font-bold text-g700" aria-hidden>
+            {t.name.split(/\s+/).map((part) => part[0]).slice(0, 2).join('').toUpperCase()}
+          </span>
+        )}
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-1">
             <div className="min-w-0">
@@ -88,7 +94,9 @@ function TutorResult({
               <Heart size={22} className={fav ? 'fill-ink' : ''} aria-hidden />
             </button>
           </div>
-          <p className="flex items-center gap-1 font-medium"><Star size={16} className="fill-ink" aria-hidden />{t.rating.toFixed(1)}<span className="font-normal text-g600">({t.reviews} reseñas)</span></p>
+          {t.reviews > 0 && (
+            <p className="flex items-center gap-1 font-medium"><Star size={16} className="fill-ink" aria-hidden />{t.rating.toFixed(1)}<span className="font-normal text-g600">({t.reviews} reseñas)</span></p>
+          )}
         </div>
       </div>
       {t.verified && <div className="mt-2"><StatusChip status="Verificado" /></div>}
@@ -199,6 +207,17 @@ function MapView({
   const pinned = list.filter((t) => t.pin)
   const [sel, setSel] = useState(pinned[0]?.id)
   const cur = pinned.find((t) => t.id === sel) ?? pinned[0]
+  if (pinned.length === 0) {
+    return (
+      <div className="grid flex-1 place-items-center bg-g50 p-8 text-center">
+        <div>
+          <span className="mx-auto grid size-16 place-items-center rounded-full bg-g200"><MapPin size={28} aria-hidden /></span>
+          <h2 className="mt-4 text-[18px] font-bold">Ubicación en mapa no disponible</h2>
+          <p className="mt-1 text-g600">Los tutores aún no comparten una ubicación aproximada. Puedes consultar sus zonas en la vista de lista.</p>
+        </div>
+      </div>
+    )
+  }
   return (
     <div className="relative flex-1 overflow-hidden bg-[#eceff1]" role="region" aria-label="Mapa de Tutores en Mérida">
       <svg className="absolute inset-0 size-full" viewBox="0 0 390 560" preserveAspectRatio="xMidYMid slice" aria-hidden>
@@ -255,10 +274,14 @@ function SkeletonResult() {
 }
 
 /* ---------- Pantalla Buscar ---------- */
-export type ScreenMode = 'list' | 'map' | 'loading' | 'empty' | 'offline'
+export type ScreenMode = 'list' | 'map' | 'loading' | 'empty' | 'offline' | 'error'
 export function SearchScreen({
   label = 'Buscar',
   initial = 'list',
+  tutors = [],
+  isLoading = false,
+  loadError = null,
+  onRetry,
   sheet = false,
   filters = DEFAULTS,
   query = '',
@@ -274,6 +297,10 @@ export function SearchScreen({
 }: {
   label?: string
   initial?: ScreenMode
+  tutors?: Tutor[]
+  isLoading?: boolean
+  loadError?: string | null
+  onRetry?: () => void
   sheet?: boolean
   filters?: Filters
   query?: string
@@ -317,16 +344,21 @@ export function SearchScreen({
       setRetrying(false)
       if (navigator.onLine) {
         setMode('list')
+        onRetry?.()
         setRecovered(true)
         window.setTimeout(() => setRecovered(false), 2200)
       }
     }, 1200)
     return () => clearTimeout(id)
-  }, [retrying])
+  }, [retrying, onRetry])
 
-  const results = useMemo(() => apply(TUTORS, applied, q), [applied, q])
-  const draftCount = useMemo(() => apply(TUTORS, draft, q).length, [draft, q])
-  const eff: ScreenMode = mode === 'offline' || mode === 'loading' ? mode : results.length === 0 ? 'empty' : view
+  const results = useMemo(() => apply(tutors, applied, q), [tutors, applied, q])
+  const draftCount = useMemo(() => apply(tutors, draft, q).length, [tutors, draft, q])
+  const eff: ScreenMode =
+    mode === 'offline' ? mode :
+      isLoading ? 'loading' :
+        loadError ? 'error' :
+          results.length === 0 ? 'empty' : view
   const n = activeCount(applied)
   const offline = eff === 'offline'
 
@@ -430,7 +462,7 @@ export function SearchScreen({
       {eff === 'empty' && (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 bg-g50 px-8 text-center">
           <span className="grid size-16 place-items-center rounded-full bg-g200"><SearchX size={30} aria-hidden /></span>
-          {TUTORS.length === 0 ? (
+          {tutors.length === 0 ? (
             <>
               <h2 className="text-[20px] font-bold">Todavía no hay tutores publicados</h2>
               <p className="text-g600">Cuando haya perfiles disponibles, aparecerán aquí.</p>
@@ -458,6 +490,14 @@ export function SearchScreen({
           <h2 className="text-[20px] font-bold">Sin conexión a internet</h2>
           <p className="text-g600">Revisa tu Wi‑Fi o tus datos móviles e inténtalo de nuevo. Tus favoritos guardados siguen disponibles.</p>
           <Button loading={retrying} icon={RefreshCw} onClick={() => setRetrying(true)}>Reintentar</Button>
+        </div>
+      )}
+      {eff === 'error' && (
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 bg-g50 px-8 text-center">
+          <span className="grid size-16 place-items-center rounded-full bg-err-bg text-err"><WifiOff size={30} aria-hidden /></span>
+          <h2 className="text-[20px] font-bold">No se pudo cargar la búsqueda</h2>
+          <p role="alert" className="text-g600">{loadError}</p>
+          <Button icon={RefreshCw} onClick={() => onRetry?.()}>Reintentar</Button>
         </div>
       )}
 

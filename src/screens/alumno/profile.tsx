@@ -123,7 +123,13 @@ export function TutorProfile({
       <div className="flex-1 overflow-y-auto">
         <div className="px-5 pb-5 pt-4">
           <div className="flex gap-4">
-            <img src={p.photo} alt={`Foto de ${p.name}`} className="size-24 shrink-0 rounded-card bg-g200 object-cover" />
+            {p.photo ? (
+              <img src={p.photo} alt={`Foto de ${p.name}`} className="size-24 shrink-0 rounded-card bg-g200 object-cover" />
+            ) : (
+              <span className="grid size-24 shrink-0 place-items-center rounded-card bg-g200 text-[24px] font-bold text-g700" aria-hidden>
+                {p.name.split(/\s+/).map((part) => part[0]).slice(0, 2).join('').toUpperCase()}
+              </span>
+            )}
             <div className="min-w-0 flex-1">
               <div className="flex items-start justify-between">
                 <h2 className="text-[22px] font-bold leading-7">{p.name}</h2>
@@ -157,7 +163,7 @@ export function TutorProfile({
         </Sec>
 
         <Sec id={`${label}-t`} title="Títulos">
-          <ul className="flex flex-col gap-3">
+          {p.degrees.length > 0 ? <ul className="flex flex-col gap-3">
             {p.degrees.map((d) => (
               <li key={d.t} className="rounded-card border border-g200 p-4">
                 <p className="font-semibold">{d.t}</p><p className="text-g600">{d.s}</p>
@@ -166,7 +172,7 @@ export function TutorProfile({
                   : <p className="mt-2 flex items-center gap-1.5 font-semibold text-warn"><Clock size={18} aria-hidden />En revisión por TutorClick</p>}
               </li>
             ))}
-          </ul>
+          </ul> : <p className="text-g600">No hay títulos adicionales en el perfil.</p>}
         </Sec>
 
         <Sec id={`${label}-h`} title="Próximos horarios">
@@ -174,8 +180,8 @@ export function TutorProfile({
             <div className="flex flex-col items-center gap-2 rounded-card border border-dashed border-g300 px-5 py-6 text-center">
               <span className="grid size-14 place-items-center rounded-full bg-g100"><CalendarX size={26} aria-hidden /></span>
               <h3 className="text-[16px] font-bold">Sin horarios próximos</h3>
-              <p className="text-g600">{p.first} no tiene horarios disponibles del lunes 23 al viernes 27 de noviembre. Por ahora no puedes reservar.</p>
-              <Button variant="secondary" icon={notify ? Check : Bell} onClick={() => setNotify(!notify)} aria-pressed={notify}>{notify ? 'Te avisaremos' : 'Avisarme cuando haya'}</Button>
+              <p className="text-g600">La disponibilidad de horarios todavía no está conectada. Por ahora no puedes reservar.</p>
+              <Button variant="secondary" icon={notify ? Check : Bell} onClick={() => setNotify(!notify)} aria-pressed={notify}>{notify ? 'Aviso activado en esta sesión' : 'Avisarme cuando haya'}</Button>
             </div>
           ) : (
             <>

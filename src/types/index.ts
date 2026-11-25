@@ -237,6 +237,51 @@ export interface AvailabilityBlock {
   mode?: ClassMode
 }
 
+export interface TutorWeeklyAvailability {
+  id: string
+  weekday: number
+  startTime: string
+  mode: ClassMode
+}
+
+export type ClassBookingStatus =
+  | 'pending_confirmation'
+  | 'confirmed'
+  | 'rejected'
+  | 'cancelled'
+  | 'reschedule_pending'
+  | 'completed'
+
+export interface ClassBookingRecord {
+  id: string
+  tutorUserId: string
+  studentUserId: string
+  tutorName: string
+  studentName: string
+  subject: string
+  startsAt: string
+  endsAt: string
+  mode: ClassMode
+  location: string | null
+  status: ClassBookingStatus
+  cancellationReason: string | null
+  cancelledBy: string | null
+  rescheduleProposedBy: string | null
+  proposedStartsAt: string | null
+  proposedMode: ClassMode | null
+  proposedLocation: string | null
+}
+
+export interface ClassNotificationRecord {
+  id: string
+  bookingId: string
+  eventType: string
+  title: string
+  message: string
+  createdAt: string
+  readAt: string | null
+}
+
 export interface SavedCardItem {
   id: string
   brand: string

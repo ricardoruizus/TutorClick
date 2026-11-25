@@ -366,7 +366,7 @@ export function SearchScreen({
     <div
       className={cx(
         'relative flex w-full flex-col overflow-hidden bg-white',
-        embedded ? 'h-full' : 'h-[844px] w-[390px] max-w-full rounded-[28px] border-4 border-ink',
+        embedded ? 'h-full' : 'h-dvh w-full md:h-auto md:min-h-[640px] md:max-w-3xl md:rounded-card md:border md:border-g200 md:shadow-sm',
       )}
     >
       {offline && (
@@ -439,7 +439,7 @@ export function SearchScreen({
             </button>
           )}
           <p className="mb-3 font-semibold" aria-live="polite">{plural(results.length)} en Mérida{n > 0 && <span className="font-normal text-g600"> · {n} {n === 1 ? 'filtro' : 'filtros'}</span>}</p>
-          <div className="flex flex-col gap-3">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {results.map((t) => (
               <TutorResult
                 key={t.id}

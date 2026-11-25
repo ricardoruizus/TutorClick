@@ -45,11 +45,11 @@ export function Screen({
     <div
       className={cx(
         'flex w-full flex-col overflow-hidden bg-white',
-        embedded ? 'h-full' : 'h-[844px] w-[390px] max-w-full rounded-[28px] border-4 border-ink',
+        embedded ? 'h-full' : 'h-dvh w-full md:h-auto md:min-h-[640px] md:max-w-3xl md:rounded-card md:border md:border-g200 md:shadow-sm',
       )}
     >
-      <div className="flex-1 overflow-y-auto px-6 pb-4 pt-6">{children}</div>
-      {footer && <div className="border-t border-g200 bg-white px-6 pb-6 pt-4">{footer}</div>}
+      <div className="flex-1 overflow-y-auto px-6 pb-4 pt-6 md:mx-auto md:w-full md:max-w-2xl">{children}</div>
+      {footer && <div className="border-t border-g200 bg-white px-6 pb-6 pt-4 md:mx-auto md:w-full md:max-w-2xl">{footer}</div>}
     </div>
   )
   if (embedded) return inner

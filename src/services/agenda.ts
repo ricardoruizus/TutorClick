@@ -1,4 +1,5 @@
 import { getSupabaseClient } from './supabase'
+import type { RealtimeChannel } from '@supabase/supabase-js'
 import type {
   ClassBookingRecord,
   ClassMode,
@@ -304,4 +305,29 @@ export async function markClassNotificationRead(notificationId: string): Promise
     .maybeSingle()
   throwOnError(error, 'No se pudo marcar la notificación como leída')
   if (!data) throw new Error('No se encontró la notificación para actualizar.')
+}
+
+/* -------------------- Tiempo real -------------------- */
+
+/**
+ * Suscribe a los cambios de las reservas y a las notificaciones de clase de la
+ * persona que inició sesión. Devuelve el canal; para dejar de escuchar, llama
+ * a `channel.unsubscribe()`. Si Realtime no está disponible, la app sigue
+ * funcionando con la carga manual al entrar al calendario.
+ */
+export function subscribeToMyBookings(onChange: () => void): RealtimeChannel {
+  const channel = getSupabaseClient()
+    .channel('my-bookings')
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'class_bookings' },
+      () => onChange(),
+    )
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'class_notifications' },
+      () => onChange(),
+    )
+    .subscribe()
+  return channel
 }

@@ -113,7 +113,7 @@ export function TutorProfile({
     <div
       className={cx(
         'flex w-full flex-col overflow-hidden bg-white',
-        embedded ? 'h-full' : 'h-[844px] w-[390px] max-w-full rounded-[28px] border-4 border-ink',
+        embedded ? 'h-full' : 'h-dvh w-full md:h-auto md:min-h-[640px] md:max-w-3xl md:rounded-card md:border md:border-g200 md:shadow-sm',
       )}
     >
       <header className="flex h-14 shrink-0 items-center border-b border-g200 px-2">

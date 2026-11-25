@@ -69,7 +69,7 @@ function Phone({
     <div
       className={cx(
         'flex w-full flex-col overflow-hidden bg-white',
-        embedded ? 'h-full' : 'h-[844px] w-[390px] max-w-full rounded-[28px] border-4 border-ink',
+        embedded ? 'h-full' : 'h-dvh w-full md:h-auto md:min-h-[640px] md:max-w-3xl md:rounded-card md:border md:border-g200 md:shadow-sm',
       )}
     >
       <header className="flex h-14 shrink-0 items-center border-b border-g200 px-2">
@@ -206,7 +206,7 @@ export function BookingScreen({
         </div>
       }
     >
-      <div className="flex flex-col gap-4 p-4">
+      <div className="flex flex-col gap-4 p-4 md:mx-auto md:w-full md:max-w-2xl">
         <TutorMini tutor={tutor} />
         {requestError && (
           <div role="alert" className="flex items-start gap-2 rounded-card border-2 border-err bg-err-bg p-3 text-[14px] font-semibold text-err">
@@ -313,7 +313,7 @@ export function UnavailableScreen() {
   return (
     <figure className="flex flex-col gap-2">
       <figcaption className="text-[12px] font-semibold text-g600">Sin horarios disponibles</figcaption>
-      <div className="flex min-h-64 w-[390px] max-w-full flex-col items-center justify-center gap-3 rounded-[28px] border-4 border-ink bg-g50 p-6 text-center">
+      <div className="flex min-h-64 w-full max-w-3xl flex-col items-center justify-center gap-3 rounded-card border border-g200 bg-g50 p-6 text-center">
         <CalendarDays size={30} className="text-g600" aria-hidden />
         <h2 className="text-[18px] font-bold">No hay horarios publicados</h2>
         <p className="text-[14px] text-g600">

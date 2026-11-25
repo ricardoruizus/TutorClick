@@ -22,8 +22,13 @@ import {
   listMyConversations,
   markConversationRead,
   sendConversationMessage,
+  subscribeToMyMessages,
   type EnsureThreadMeta,
+  type SendMessagePayload,
 } from '../services/mensajes'
+import { subscribeToMyBookings } from '../services/agenda'
+import { AppShell } from '../components/ui/app-shell'
+import type { RealtimeChannel } from '@supabase/supabase-js'
 import type {
   AvailabilityBlock,
   ClassSession,
@@ -131,6 +136,8 @@ export function AppRouter() {
   const [threads, setThreads] = useState<ConversationThread[]>([])
   const [threadsLoading, setThreadsLoading] = useState(false)
   const [threadsError, setThreadsError] = useState<string | null>(null)
+  const [realtimeLive, setRealtimeLive] = useState(false)
+  const [bookingsTick, setBookingsTick] = useState(0)
 
   useEffect(() => {
     initializeAuth()
@@ -162,6 +169,63 @@ export function AppRouter() {
 
     return () => {
       active = false
+    }
+  }, [session?.id, session?.role])
+
+  // Tiempo real: una sola suscripción mientras haya sesión (no admin). Cuando
+  // llega un mensaje nuevo se refresca la lista con un pequeño debounce para
+  // no recargar varias veces seguidas. Si Realtime falla, el refresco manual
+  // al entrar a Mensajes sigue funcionando como respaldo.
+  useEffect(() => {
+    if (!session || session.role === 'admin') {
+      setRealtimeLive(false)
+      return
+    }
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let messagesChannel: RealtimeChannel | undefined
+    let bookingsChannel: RealtimeChannel | undefined
+
+    const scheduleThreadsRefresh = () => {
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => {
+        void listMyConversations()
+          .then((items) => {
+            if (!cancelled) {
+              setThreads(items)
+              setThreadsError(null)
+            }
+          })
+          .catch(() => {
+            // Sin conexión o error: se conserva la lista actual y el refresco manual.
+          })
+      }, 400)
+    }
+    const scheduleBookingsRefresh = () => {
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => {
+        if (!cancelled) setBookingsTick((value) => value + 1)
+      }, 400)
+    }
+
+    try {
+      messagesChannel = subscribeToMyMessages(scheduleThreadsRefresh)
+      messagesChannel.subscribe((status) => {
+        if (!cancelled && status === 'SUBSCRIBED') setRealtimeLive(true)
+      })
+      bookingsChannel = subscribeToMyBookings(scheduleBookingsRefresh)
+    } catch {
+      // Realtime no disponible (por ejemplo, sin la migración aplicada):
+      // la app sigue funcionando con el refresco manual.
+      setRealtimeLive(false)
+    }
+
+    return () => {
+      cancelled = true
+      if (timer) clearTimeout(timer)
+      void messagesChannel?.unsubscribe()
+      void bookingsChannel?.unsubscribe()
+      setRealtimeLive(false)
     }
   }, [session?.id, session?.role])
 
@@ -254,7 +318,7 @@ export function AppRouter() {
 
   async function handleSendMessage(
     threadId: string,
-    payload: { text: string; attachmentName?: string },
+    payload: SendMessagePayload,
   ): Promise<void> {
     await sendConversationMessage(threadId, payload)
     try {
@@ -347,11 +411,8 @@ export function AppRouter() {
   }
 
   return (
-    <div className="flex min-h-dvh w-full items-center justify-center bg-white min-[500px]:bg-g100 min-[500px]:px-4 min-[500px]:py-6">
-      <main
-        aria-label={session?.role === 'tutor' ? 'Aplicación móvil del Tutor' : 'Aplicación móvil del Alumno'}
-        className="h-dvh w-full min-[500px]:h-auto min-[500px]:w-auto"
-      >
+    <div className="flex min-h-dvh w-full justify-center bg-white md:bg-g100 md:px-4 md:py-6">
+      <AppShell label={session?.role === 'tutor' ? 'Aplicación del Tutor' : 'Aplicación del Alumno'}>
         {session?.role === 'alumno' ? (
           <StudentApp
             key={session.id}
@@ -366,6 +427,8 @@ export function AppRouter() {
             onUpdateSession={handleUpdateSession}
             threadsError={threadsError}
             threadsLoading={threadsLoading}
+            realtimeLive={realtimeLive}
+            bookingsTick={bookingsTick}
             onRefreshThreads={refreshThreads}
             onMarkThreadRead={(id) => handleMarkThreadRead(id, 'alumno')}
             onSendMessage={(id, payload) => handleSendMessage(id, payload)}
@@ -388,13 +451,15 @@ export function AppRouter() {
             onUpdateSession={handleUpdateSession}
             threadsError={threadsError}
             threadsLoading={threadsLoading}
+            realtimeLive={realtimeLive}
+            bookingsTick={bookingsTick}
             onRefreshThreads={refreshThreads}
             onMarkThreadRead={(id) => handleMarkThreadRead(id, 'tutor')}
             onSendMessage={(id, payload) => handleSendMessage(id, payload)}
             onEnsureThread={handleEnsureThread}
           />
         ) : (
-          <div className="relative h-dvh w-full overflow-hidden bg-white min-[500px]:h-[844px] min-[500px]:w-[390px] min-[500px]:max-w-full min-[500px]:rounded-[28px] min-[500px]:border-4 min-[500px]:border-ink min-[500px]:shadow-xl">
+          <div className="flex h-full w-full flex-col overflow-hidden bg-white">
             {entryView.screen === 'welcome' && (
               <Welcome
                 embedded
@@ -486,7 +551,7 @@ export function AppRouter() {
             )}
           </div>
         )}
-      </main>
+      </AppShell>
     </div>
   )
 }

@@ -164,6 +164,10 @@ export interface Mensaje {
   time: string
   read: boolean
   attachmentName?: string
+  attachmentPath?: string
+  attachmentType?: string
+  attachmentSize?: number
+  attachmentUrl?: string
 }
 export type ChatMessage = Mensaje
 

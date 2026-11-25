@@ -3,6 +3,7 @@ import { CalendarDays, CheckCircle2, Shuffle, Video, MapPin } from 'lucide-react
 import { Login, Recover, RoleChoice, StudentForm, Welcome } from './auth'
 import { BookingScreen, type BookingSelection } from './booking'
 import { BottomNav, Button, TopBar, studentNav } from '../../components/ui/ds'
+import { AppShell } from '../../components/ui/app-shell'
 import { ConversationScreen, MessagesListScreen } from '../../components/ui/messages'
 import { TutorProfile, type Profile } from './profile'
 import { DEFAULTS, SearchScreen, type Filters } from './search'
@@ -25,6 +26,7 @@ import type {
 } from '../../types'
 import { DEFAULT_STUDENT_PROFILE, formatTimeChip } from '../../data/mock'
 import { logout, register } from '../../services/auth'
+import type { SendMessagePayload } from '../../services/mensajes'
 import { cancelFutureSeriesSessions as cancelFutureSeries } from '../../services/reservas'
 import {
   listAvailableTutorSlots,
@@ -121,6 +123,8 @@ export function StudentApp({
   threads,
   threadsError,
   threadsLoading,
+  realtimeLive = false,
+  bookingsTick = 0,
   onRefreshThreads,
   accountId,
   accountName,
@@ -139,6 +143,9 @@ export function StudentApp({
   threads: ConversationThread[]
   threadsError?: string | null
   threadsLoading?: boolean
+  realtimeLive?: boolean
+  /** Aumenta cada vez que Realtime avisa de un cambio en reservas o notificaciones. */
+  bookingsTick?: number
   onRefreshThreads: () => Promise<void>
   accountId: string
   accountName: string
@@ -147,7 +154,7 @@ export function StudentApp({
   initialRoute?: StudentRoute
   onUpdateSession: (id: string, patch: Partial<ClassSession>) => void
   onMarkThreadRead: (threadId: string) => Promise<void>
-  onSendMessage: (threadId: string, payload: { text: string; attachmentName?: string }) => Promise<void>
+  onSendMessage: (threadId: string, payload: SendMessagePayload) => Promise<void>
   onEnsureThread: (meta: {
     studentId: string
     studentName: string
@@ -261,7 +268,7 @@ export function StudentApp({
     return () => {
       active = false
     }
-  }, [accountId, current])
+  }, [accountId, current, bookingsTick])
 
   async function refreshClassLifecycleData() {
     const [bookingsResult, notificationsResult] = await Promise.allSettled([
@@ -458,7 +465,7 @@ export function StudentApp({
   } : null
 
   return (
-    <div className="relative h-dvh w-full overflow-hidden bg-white min-[500px]:h-[844px] min-[500px]:w-[390px] min-[500px]:max-w-full min-[500px]:rounded-[28px] min-[500px]:border-4 min-[500px]:border-ink min-[500px]:shadow-xl">
+    <AppShell label="Aplicación del Alumno">
       <div key={`${current}-${navStep}`} className={`h-full w-full ${direction === 'forward' ? 'anim-forward' : 'anim-back'}`}>
         {current === 'welcome' && <Welcome embedded onLogin={() => push('login')} onRegister={() => push('register-role')} />}
         {current === 'login' && (
@@ -598,6 +605,7 @@ export function StudentApp({
             sessions={studentSessions}
             error={threadsError ?? threadActionError}
             isLoading={threadsLoading}
+            live={realtimeLive}
             onOpenThread={openConversation}
             onFindTutor={() => push('search')}
             onBack={history.length > 1 ? goBack : undefined}
@@ -769,6 +777,6 @@ export function StudentApp({
           </div>
         )}
       </div>
-    </div>
+    </AppShell>
   )
 }

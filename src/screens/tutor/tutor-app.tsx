@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Login, Recover } from '../alumno/auth'
 import { ConversationScreen, MessagesListScreen } from '../../components/ui/messages'
+import { AppShell } from '../../components/ui/app-shell'
+import type { SendMessagePayload } from '../../services/mensajes'
 import { ClassDetailScreen, UnifiedCalendarScreen, type DetailSheetKind } from '../../components/ui/unified-calendar'
 import {
   TutorFinanceScreen,
@@ -53,6 +55,8 @@ export function TutorApp({
   threads,
   threadsError,
   threadsLoading,
+  realtimeLive = false,
+  bookingsTick = 0,
   onRefreshThreads,
   accountId,
   accountName,
@@ -73,6 +77,9 @@ export function TutorApp({
   threads: ConversationThread[]
   threadsError?: string | null
   threadsLoading?: boolean
+  realtimeLive?: boolean
+  /** Aumenta cada vez que Realtime avisa de un cambio en reservas o notificaciones. */
+  bookingsTick?: number
   onRefreshThreads: () => Promise<void>
   accountId: string
   accountName: string
@@ -85,7 +92,7 @@ export function TutorApp({
   onUpdateBlock: (blockId: string, patch: Partial<AvailabilityBlock>) => void
   onUpdateSession: (id: string, patch: Partial<ClassSession>) => void
   onMarkThreadRead: (threadId: string) => Promise<void>
-  onSendMessage: (threadId: string, payload: { text: string; attachmentName?: string }) => Promise<void>
+  onSendMessage: (threadId: string, payload: SendMessagePayload) => Promise<void>
   onEnsureThread: (meta: {
     studentId: string
     studentName: string
@@ -179,7 +186,7 @@ export function TutorApp({
     return () => {
       active = false
     }
-  }, [accountId, current])
+  }, [accountId, current, bookingsTick])
 
   async function reloadAvailability() {
     const slots = await listTutorWeeklyAvailability(accountId)
@@ -308,7 +315,7 @@ export function TutorApp({
   }
 
   return (
-    <div className="relative h-dvh w-full overflow-hidden bg-white min-[500px]:h-[844px] min-[500px]:w-[390px] min-[500px]:max-w-full min-[500px]:rounded-[28px] min-[500px]:border-4 min-[500px]:border-ink min-[500px]:shadow-xl">
+    <AppShell label="Aplicación del Tutor">
       <div key={`${current}-${navStep}`} className={`h-full w-full ${direction === 'forward' ? 'anim-forward' : 'anim-back'}`}>
         {current === 'login' && (
           <Login
@@ -444,6 +451,7 @@ export function TutorApp({
             sessions={tutorSessions}
             error={threadsError ?? threadActionError}
             isLoading={threadsLoading}
+            live={realtimeLive}
             onOpenThread={openConversation}
             onGoCalendar={() => handleTabSelect(1)}
             onBack={history.length > 1 ? goBack : undefined}
@@ -511,6 +519,6 @@ export function TutorApp({
           />
         )}
       </div>
-    </div>
+    </AppShell>
   )
 }

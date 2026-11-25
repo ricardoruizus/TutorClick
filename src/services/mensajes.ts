@@ -1,3 +1,4 @@
+import type { RealtimeChannel } from '@supabase/supabase-js'
 import type { ConversationThread, Mensaje, UserRole } from '../types'
 import { getSupabaseClient } from './supabase'
 
@@ -9,6 +10,17 @@ export interface EnsureThreadMeta {
   tutorPhoto: string
   subject: string
   sessionId: string
+}
+
+export interface SendMessagePayload {
+  text: string
+  attachmentName?: string
+  /** Archivo elegido en el chat. Se sube a Storage antes de enviar el mensaje. */
+  attachmentFile?: File
+  /** Ruta ya subida en Storage (cuando el archivo se subió antes de llamar). */
+  attachmentPath?: string
+  attachmentType?: string
+  attachmentSize?: number
 }
 
 interface ConversationRow {
@@ -27,9 +39,28 @@ interface ConversationMessageRow {
   sender_user_id: string
   content: string
   attachment_name: string | null
+  attachment_path: string | null
+  attachment_type: string | null
+  attachment_size: number | null
   created_at: string
   read_at: string | null
 }
+
+const MESSAGE_ATTACHMENTS_BUCKET = 'message-attachments'
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+const ALLOWED_ATTACHMENT_TYPES = new Set([
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'text/plain',
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+])
 
 function throwOnError(error: { message: string } | null, operation: string): void {
   if (error) throw new Error(`${operation}: ${error.message}`)
@@ -43,9 +74,20 @@ function formatMessageTime(timestamp: string): string {
   }).format(new Date(timestamp))
 }
 
+export function formatAttachmentSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+export function isImageAttachment(type?: string): boolean {
+  return type === 'image/jpeg' || type === 'image/png' || type === 'image/webp'
+}
+
 function toMessage(
   row: ConversationMessageRow,
   conversation: ConversationRow,
+  attachmentUrl?: string,
 ): Mensaje {
   const sender: UserRole | null = row.sender_user_id === conversation.student_user_id
     ? 'alumno'
@@ -61,6 +103,10 @@ function toMessage(
     time: formatMessageTime(row.created_at),
     read: row.read_at !== null,
     attachmentName: row.attachment_name ?? undefined,
+    attachmentPath: row.attachment_path ?? undefined,
+    attachmentType: row.attachment_type ?? undefined,
+    attachmentSize: row.attachment_size ?? undefined,
+    attachmentUrl,
   }
 }
 
@@ -85,6 +131,40 @@ export function detectExternalContact(message: string): {
   return { hasPhone, hasExternalLink }
 }
 
+/* -------------------- Adjuntos (Storage privado) -------------------- */
+
+function cleanFileName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120) || 'archivo'
+}
+
+export async function uploadMessageAttachment(
+  conversationId: string,
+  file: File,
+): Promise<{ path: string; type: string; size: number }> {
+  if (!ALLOWED_ATTACHMENT_TYPES.has(file.type)) {
+    throw new Error('Usa un archivo PDF, Word, Excel, PowerPoint, TXT o una imagen JPG, PNG o WebP.')
+  }
+  if (file.size > MAX_ATTACHMENT_BYTES || file.size < 1) {
+    throw new Error('El archivo debe pesar entre 1 B y 10 MB.')
+  }
+  const path = `${conversationId}/${crypto.randomUUID()}-${cleanFileName(file.name)}`
+  const { error } = await getSupabaseClient()
+    .storage.from(MESSAGE_ATTACHMENTS_BUCKET)
+    .upload(path, file, { contentType: file.type, upsert: false })
+  throwOnError(error, 'No se pudo subir el archivo adjunto')
+  return { path, type: file.type, size: file.size }
+}
+
+/** Enlace temporal (1 hora) para abrir o descargar un adjunto privado. */
+export async function getMessageAttachmentUrl(path: string): Promise<string> {
+  const { data, error } = await getSupabaseClient()
+    .storage.from(MESSAGE_ATTACHMENTS_BUCKET)
+    .createSignedUrl(path, 3600)
+  throwOnError(error, 'No se pudo abrir el archivo adjunto')
+  if (!data) throw new Error('Supabase no devolvió el enlace del archivo adjunto.')
+  return data.signedUrl
+}
+
 export async function listMyConversations(): Promise<ConversationThread[]> {
   const supabase = getSupabaseClient()
   const { data: conversationData, error: conversationError } = await supabase
@@ -100,7 +180,7 @@ export async function listMyConversations(): Promise<ConversationThread[]> {
 
   const { data: messageData, error: messageError } = await supabase
     .from('conversation_messages')
-    .select('id, conversation_id, sender_user_id, content, attachment_name, created_at, read_at')
+    .select('id, conversation_id, sender_user_id, content, attachment_name, attachment_path, attachment_type, attachment_size, created_at, read_at')
     .in('conversation_id', conversations.map((conversation) => conversation.id))
     .order('created_at', { ascending: true })
   throwOnError(messageError, 'No se pudieron cargar los mensajes')
@@ -112,6 +192,17 @@ export async function listMyConversations(): Promise<ConversationThread[]> {
     conversationMessages.push(message)
     messagesByConversation.set(message.conversation_id, conversationMessages)
   }
+
+  // Solo se crea un enlace firmado por cada adjunto distinto (1 hora de vigencia).
+  const attachmentPaths = [...new Set(messages.map((m) => m.attachment_path).filter((p): p is string => p !== null))]
+  const attachmentUrls = new Map<string, string>()
+  await Promise.all(attachmentPaths.map(async (path) => {
+    try {
+      attachmentUrls.set(path, await getMessageAttachmentUrl(path))
+    } catch {
+      // Si un enlace no se puede crear, el mensaje se muestra sin botón de descarga.
+    }
+  }))
 
   return conversations.map((conversation) => {
     const conversationMessages = messagesByConversation.get(conversation.id) ?? []
@@ -130,7 +221,11 @@ export async function listMyConversations(): Promise<ConversationThread[]> {
       unreadForTutor: conversationMessages.filter(
         (message) => message.sender_user_id === conversation.student_user_id && message.read_at === null,
       ).length,
-      messages: conversationMessages.map((message) => toMessage(message, conversation)),
+      messages: conversationMessages.map((message) => toMessage(
+        message,
+        conversation,
+        message.attachment_path ? attachmentUrls.get(message.attachment_path) : undefined,
+      )),
     }
   })
 }
@@ -151,13 +246,31 @@ export async function ensureConversation(meta: EnsureThreadMeta): Promise<string
 
 export async function sendConversationMessage(
   conversationId: string,
-  payload: { text: string; attachmentName?: string },
+  payload: SendMessagePayload,
 ): Promise<void> {
+  // Si el usuario eligió un archivo, primero se sube a Storage y después se
+  // guarda el mensaje con la ruta del archivo. Si la subida falla, no se envía nada.
+  let attachment = {
+    path: payload.attachmentPath ?? null,
+    type: payload.attachmentType ?? null,
+    size: payload.attachmentSize ?? null,
+  }
+  if (payload.attachmentFile) {
+    const uploaded = await uploadMessageAttachment(conversationId, payload.attachmentFile)
+    attachment = { path: uploaded.path, type: uploaded.type, size: uploaded.size }
+  }
   const { error } = await getSupabaseClient().rpc('send_conversation_message', {
     p_conversation_id: conversationId,
     p_content: payload.text,
-    p_attachment_name: payload.attachmentName ?? null,
+    p_attachment_name: payload.attachmentName ?? payload.attachmentFile?.name ?? null,
+    p_attachment_path: attachment.path,
+    p_attachment_type: attachment.type,
+    p_attachment_size: attachment.size,
   })
+  if (error && attachment.path && payload.attachmentFile) {
+    // El mensaje no se guardó: borra el archivo subido para no dejar basura.
+    await getSupabaseClient().storage.from(MESSAGE_ATTACHMENTS_BUCKET).remove([attachment.path])
+  }
   throwOnError(error, 'No se pudo enviar el mensaje')
 }
 
@@ -166,4 +279,59 @@ export async function markConversationRead(conversationId: string): Promise<void
     p_conversation_id: conversationId,
   })
   throwOnError(error, 'No se pudo marcar la conversación como leída')
+}
+
+/* -------------------- Tiempo real -------------------- */
+
+/**
+ * Suscribe a los mensajes nuevos (y a los cambios de lectura) de una conversación.
+ * Devuelve el canal; para dejar de escuchar, llama a `channel.unsubscribe()`.
+ * Si Realtime no está disponible, la app sigue funcionando con el refresco manual.
+ */
+export function subscribeToConversationMessages(
+  conversationId: string,
+  onInsert: () => void,
+): RealtimeChannel {
+  const channel = getSupabaseClient()
+    .channel(`messages:${conversationId}`)
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'conversation_messages',
+        filter: `conversation_id=eq.${conversationId}`,
+      },
+      () => onInsert(),
+    )
+    .on(
+      'postgres_changes',
+      {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'conversation_messages',
+        filter: `conversation_id=eq.${conversationId}`,
+      },
+      () => onInsert(),
+    )
+    .subscribe()
+  return channel
+}
+
+/** Suscribe a cualquier mensaje nuevo de las conversaciones de la persona que inició sesión. */
+export function subscribeToMyMessages(onChange: () => void): RealtimeChannel {
+  const channel = getSupabaseClient()
+    .channel('my-messages')
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'conversation_messages' },
+      () => onChange(),
+    )
+    .on(
+      'postgres_changes',
+      { event: 'UPDATE', schema: 'public', table: 'conversation_messages' },
+      () => onChange(),
+    )
+    .subscribe()
+  return channel
 }
